@@ -1,5 +1,17 @@
 # Update History
 
+## 32afa0e jaekuryu 2025-07-26 09:05:45 -0400 Remove unnecessary GUI component in main window : pyMnet_gui.py based on docrules.md
+
+- Removed redundant "Results" section from main control panel to eliminate duplication
+- Eliminated Status, Classification, and Confidence labels from control panel
+- Streamlined main window interface by removing duplicate information display
+- Maintained comprehensive results display in dedicated "Results" and "Summary" tabs
+- Improved GUI layout efficiency and reduced visual clutter
+- Enhanced user experience by centralizing results in appropriate dedicated tabs
+- Removed all associated label update calls in analysis workflow
+- Simplified control panel to focus on essential parameter configuration
+- Maintained full functionality while improving interface organization
+
 ## 3d378ea jaekuryu 2025-07-26 08:46:21 -0400 Plotting segmented spectrogram in Mobilenet Preprocess tab : pyMnet_gui.py based on docrules.md
 
 - Modified MobileNet Preprocessing tab to display spectrograms for specific segments instead of full IQ data
