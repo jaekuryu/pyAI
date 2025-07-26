@@ -1,5 +1,21 @@
 # Update History
 
+## 80f8add jaekuryu 2025-07-26 17:07:00 -0400 Adding ResNets to model type : pyMnet_gui.py based on docrules.md
+
+- Added ResNet models (resnet18, resnet34, resnet50) to the "Model Type" dropdown alongside existing MobileNet options
+- Created ResNetFeatureExtractor class to handle ResNet model loading and feature extraction
+- Modified first layer of ResNet models for single-channel input (same as MobileNet) by changing conv1 to accept 1 channel
+- Implemented adaptive pooling and feature dimension handling for different ResNet variants:
+  - ResNet18/34: 512 feature dimensions
+  - ResNet50: 2048 feature dimensions
+- Updated AnalysisThread to dynamically select between MobileNet and ResNet models based on user selection
+- Enhanced model type display in Results tab, Summary tab, and Preprocessing tab titles
+- Added model_type to analysis results dictionary for comprehensive tracking
+- Updated tab label from "MobileNet Preprocessing" to "Preprocessing" to reflect multi-model support
+- Maintained backward compatibility with existing MobileNet functionality
+- Improved spectrum sensing flexibility by providing multiple CNN architecture options
+- Enhanced feature extraction capabilities with different model complexities and feature dimensions
+
 ## 830fc13 jaekuryu 2025-07-26 10:15:57 -0400 Adding more options (advanced/automatic) for Threshold determination : pyMnet_gui.py based on docrules.md
 
 - Added four new advanced threshold methods to the "Threshold Method" dropdown: Otsu, Percentile, K-Means, and Adaptive
