@@ -602,6 +602,8 @@ class MobileNetPreprocessingTab(QWidget):
     def __init__(self):
         super().__init__()
         self.plot_widget = PlotWidget()
+        self.segments = []  # Store segments for selection
+        self.current_params = {}  # Store current parameters for redrawing
         self.setup_ui()
         
     def setup_ui(self):
@@ -610,12 +612,25 @@ class MobileNetPreprocessingTab(QWidget):
         # Controls
         controls_layout = QHBoxLayout()
         
+        # Add segment selector
+        self.segment_label = QLabel("Segment:")
+        self.segment_spin = QSpinBox()
+        self.segment_spin.setRange(0, 0)  # Will be updated when segments are created
+        self.segment_spin.setValue(0)
+        self.segment_spin.valueChanged.connect(self.on_segment_changed)
+        
+        self.segment_info_label = QLabel("(0 total)")
+        self.segment_info_label.setStyleSheet("color: gray; font-size: 10px;")
+        
         self.update_button = QPushButton("Update Preprocessing")
         self.update_button.clicked.connect(self.update_preprocessing)
         
         self.export_button = QPushButton("Export Preprocessing")
         self.export_button.clicked.connect(self.export_preprocessing)
         
+        controls_layout.addWidget(self.segment_label)
+        controls_layout.addWidget(self.segment_spin)
+        controls_layout.addWidget(self.segment_info_label)
         controls_layout.addWidget(self.update_button)
         controls_layout.addWidget(self.export_button)
         controls_layout.addStretch()
@@ -625,9 +640,37 @@ class MobileNetPreprocessingTab(QWidget):
         self.setLayout(layout)
         
     def update_preprocessing(self, iq_data=None, analysis_results=None, sample_rate=23.04e6, fft_size=1024, hop_size=256, window_type='hanning', model_type='mobilenet_v2'):
+        # Store current parameters for redrawing when segment changes
+        self.current_params = {
+            'iq_data': iq_data,
+            'analysis_results': analysis_results,
+            'sample_rate': sample_rate,
+            'fft_size': fft_size,
+            'hop_size': hop_size,
+            'window_type': window_type,
+            'model_type': model_type
+        }
+        
         if iq_data is None:
             return
             
+        # Create segments if not already done or if IQ data changed
+        if not hasattr(self, '_last_iq_data') or self._last_iq_data is not iq_data:
+            self.segments = segment_iq_data(iq_data, segment_length=4096, overlap=0.5)
+            self._last_iq_data = iq_data
+            # Update segment spin box range
+            self.segment_spin.setRange(0, max(0, len(self.segments) - 1))
+            self.segment_spin.setValue(0)
+            # Update segment info label
+            self.segment_info_label.setText(f"({len(self.segments)} total)")
+        
+        # Get selected segment
+        segment_idx = self.segment_spin.value()
+        if segment_idx >= len(self.segments):
+            return
+            
+        selected_segment = self.segments[segment_idx]
+        
         self.plot_widget.clear()
         fig = self.plot_widget.figure
         
@@ -637,17 +680,17 @@ class MobileNetPreprocessingTab(QWidget):
         # Adjust figure margins to move spectrograms down
         fig.subplots_adjust(top=0.75, bottom=0.15)
         
-        # Compute spectrogram from full IQ data (not just one segment)
+        # Compute spectrogram from selected segment
         from pyMnet import IQTransform
         iq_transform = IQTransform(fft_size=fft_size, hop_size=hop_size)
-        complex_data = iq_data[:, 0] + 1j * iq_data[:, 1]
-        spectrogram = iq_transform.compute_spectrogram(complex_data)
+        complex_segment = selected_segment[:, 0] + 1j * selected_segment[:, 1]
+        spectrogram = iq_transform.compute_spectrogram(complex_segment)
             
         # Step 1: Original spectrogram (dB scale)
         ax1 = fig.add_subplot(gs[0, 0])
         spectrogram_db = 20 * np.log10(spectrogram + 1e-10)
         im1 = ax1.imshow(spectrogram_db, aspect='auto', cmap='viridis', origin='lower')
-        ax1.set_title('Step 1: dB Scale Spectrogram', fontsize=10)
+        ax1.set_title(f'Step 1: dB Scale Spectrogram\n(Segment {segment_idx}/{len(self.segments)-1})', fontsize=10)
         ax1.set_xlabel('Time Frame', fontsize=7)
         ax1.set_ylabel('Frequency Bin', fontsize=7)
         ax1.tick_params(axis='both', labelsize=6)
@@ -685,12 +728,19 @@ class MobileNetPreprocessingTab(QWidget):
         cbar3.ax.tick_params(labelsize=6)
         
         # Add text annotations in a better position
-        fig.text(0.48, 0.98, f'Original Size: {spectrogram.shape[1]}x{spectrogram.shape[0]}', 
+        segment_duration = len(selected_segment) / sample_rate * 1000  # Duration in ms
+        fig.text(0.48, 0.98, f'Segment {segment_idx}: {spectrogram.shape[1]}x{spectrogram.shape[0]} ({segment_duration:.1f}ms)', 
                 fontsize=8, verticalalignment='top', horizontalalignment='right', bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
         fig.text(0.68, 0.98, f'Final Size: 224x224x1 (Single Channel)', 
                 fontsize=8, verticalalignment='top', horizontalalignment='right', bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
         
         self.plot_widget.canvas.draw()
+        
+    def on_segment_changed(self):
+        """Handle segment selection change"""
+        # Redraw with current parameters if we have them
+        if self.current_params:
+            self.update_preprocessing(**self.current_params)
         
     def export_preprocessing(self):
         # TODO: Implement export functionality
@@ -706,7 +756,7 @@ class SpectrumSensingGUI(QMainWindow):
         
     def setup_ui(self):
         self.setWindowTitle("Spectrum Sensing GUI")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setGeometry(100, 100, 1200, 900)
         
         # Create central widget and main layout
         central_widget = QWidget()
