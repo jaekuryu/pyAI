@@ -32,7 +32,7 @@ class AnalysisThread(QThread):
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
     
-    def __init__(self, iq_data, sample_rate, fft_size, hop_size, window_type, model_type, threshold_method):
+    def __init__(self, iq_data, sample_rate, fft_size, hop_size, window_type, model_type, threshold_method, segment_size):
         super().__init__()
         self.iq_data = iq_data
         self.sample_rate = sample_rate
@@ -41,6 +41,7 @@ class AnalysisThread(QThread):
         self.window_type = window_type
         self.model_type = model_type
         self.threshold_method = threshold_method
+        self.segment_size = segment_size
         
     def run(self):
         try:
@@ -55,7 +56,7 @@ class AnalysisThread(QThread):
             
             # Segment the IQ data (same as pyMnet.py)
             self.progress.emit(20)
-            segments = segment_iq_data(self.iq_data, segment_length=4096, overlap=0.5)
+            segments = segment_iq_data(self.iq_data, segment_length=self.segment_size, overlap=0.5)
             print(f"Created {len(segments)} segments for analysis")
             
             # Use feature extractor to get meaningful features (same as pyMnet.py)
@@ -648,7 +649,7 @@ class MobileNetPreprocessingTab(QWidget):
         layout.addWidget(self.plot_widget)
         self.setLayout(layout)
         
-    def update_preprocessing(self, iq_data=None, analysis_results=None, sample_rate=23.04e6, fft_size=1024, hop_size=256, window_type='hanning', model_type='mobilenet_v2'):
+    def update_preprocessing(self, iq_data=None, analysis_results=None, sample_rate=23.04e6, fft_size=1024, hop_size=256, window_type='hanning', model_type='mobilenet_v2', segment_size=50176):
         # Store current parameters for redrawing when segment changes
         self.current_params = {
             'iq_data': iq_data,
@@ -657,7 +658,8 @@ class MobileNetPreprocessingTab(QWidget):
             'fft_size': fft_size,
             'hop_size': hop_size,
             'window_type': window_type,
-            'model_type': model_type
+            'model_type': model_type,
+            'segment_size': segment_size
         }
         
         if iq_data is None:
@@ -665,7 +667,7 @@ class MobileNetPreprocessingTab(QWidget):
             
         # Create segments if not already done or if IQ data changed
         if not hasattr(self, '_last_iq_data') or self._last_iq_data is not iq_data:
-            self.segments = segment_iq_data(iq_data, segment_length=4096, overlap=0.5)
+            self.segments = segment_iq_data(iq_data, segment_length=segment_size, overlap=0.5)
             self._last_iq_data = iq_data
             # Update segment spin box range
             self.segment_spin.setRange(0, max(0, len(self.segments) - 1))
@@ -878,6 +880,12 @@ class SpectrumSensingGUI(QMainWindow):
         self.threshold_method_combo.setCurrentText('Median')
         self.threshold_method_combo.currentTextChanged.connect(self.on_parameter_changed)
         
+        self.segment_size_label = QLabel("Segment Size:")
+        self.segment_size_combo = QComboBox()
+        self.segment_size_combo.addItems(['16384', '32768', '50176', '65536', '131072'])
+        self.segment_size_combo.setCurrentText('50176')
+        self.segment_size_combo.currentTextChanged.connect(self.on_parameter_changed)
+        
         param_layout.addWidget(self.sample_rate_label, 0, 0)
         param_layout.addWidget(self.sample_rate_spin, 0, 1)
         param_layout.addWidget(self.fft_size_label, 1, 0)
@@ -890,6 +898,8 @@ class SpectrumSensingGUI(QMainWindow):
         param_layout.addWidget(self.model_combo, 4, 1)
         param_layout.addWidget(self.threshold_method_label, 5, 0)
         param_layout.addWidget(self.threshold_method_combo, 5, 1)
+        param_layout.addWidget(self.segment_size_label, 6, 0)
+        param_layout.addWidget(self.segment_size_combo, 6, 1)
         
         param_group.setLayout(param_layout)
         
@@ -927,7 +937,8 @@ class SpectrumSensingGUI(QMainWindow):
             window_type = self.window_combo.currentText() # Get window type
             model_type = self.model_combo.currentText() # Get model type
             threshold_method = self.threshold_method_combo.currentText() # Get threshold method
-            self.mobilenet_tab.update_preprocessing(self.iq_data, None, sample_rate, fft_size, hop_size, window_type, model_type)
+            segment_size = int(self.segment_size_combo.currentText()) # Get segment size
+            self.mobilenet_tab.update_preprocessing(self.iq_data, None, sample_rate, fft_size, hop_size, window_type, model_type, segment_size)
     
     def get_settings(self):
         """Get current parameter settings"""
@@ -937,7 +948,8 @@ class SpectrumSensingGUI(QMainWindow):
             'hop_size': self.hop_size_spin.value(),
             'window_type': self.window_combo.currentText(),
             'model_type': self.model_combo.currentText(),
-            'threshold_method': self.threshold_method_combo.currentText()
+            'threshold_method': self.threshold_method_combo.currentText(),
+            'segment_size': int(self.segment_size_combo.currentText())
         }
         
     def set_settings(self, settings):
@@ -954,6 +966,8 @@ class SpectrumSensingGUI(QMainWindow):
             self.model_combo.setCurrentText(settings['model_type'])
         if 'threshold_method' in settings:
             self.threshold_method_combo.setCurrentText(settings['threshold_method'])
+        if 'segment_size' in settings:
+            self.segment_size_combo.setCurrentText(str(settings['segment_size']))
             
     def save_settings(self):
         """Save current settings to file"""
@@ -984,6 +998,7 @@ class SpectrumSensingGUI(QMainWindow):
         self.window_combo.setCurrentText('hanning')
         self.model_combo.setCurrentText('mobilenet_v2')
         self.threshold_method_combo.setCurrentText('Median')
+        self.segment_size_combo.setCurrentText('50176')
 
     def create_tabs(self):
         # Create tab instances
@@ -1049,7 +1064,8 @@ class SpectrumSensingGUI(QMainWindow):
         window_type = self.window_combo.currentText() # Get window type
         model_type = self.model_combo.currentText() # Get model type
         threshold_method = self.threshold_method_combo.currentText() # Get threshold method
-        self.mobilenet_tab.update_preprocessing(self.iq_data, None, sample_rate, fft_size, hop_size, window_type, model_type)
+        segment_size = int(self.segment_size_combo.currentText()) # Get segment size
+        self.mobilenet_tab.update_preprocessing(self.iq_data, None, sample_rate, fft_size, hop_size, window_type, model_type, segment_size)
         
     def start_analysis(self):
         if self.iq_data is None:
@@ -1063,10 +1079,11 @@ class SpectrumSensingGUI(QMainWindow):
         window_type = self.window_combo.currentText() # Get window type
         model_type = self.model_combo.currentText() # Get model type
         threshold_method = self.threshold_method_combo.currentText() # Get threshold method
+        segment_size = int(self.segment_size_combo.currentText()) # Get segment size
         
         # Create and start analysis thread
         self.analysis_thread = AnalysisThread(
-            self.iq_data, sample_rate, fft_size, hop_size, window_type, model_type, threshold_method
+            self.iq_data, sample_rate, fft_size, hop_size, window_type, model_type, threshold_method, segment_size
         )
         
         self.analysis_thread.progress.connect(self.update_progress)
@@ -1108,7 +1125,8 @@ class SpectrumSensingGUI(QMainWindow):
         window_type = self.window_combo.currentText() # Get window type
         model_type = self.model_combo.currentText() # Get model type
         threshold_method = self.threshold_method_combo.currentText() # Get threshold method
-        self.mobilenet_tab.update_preprocessing(self.iq_data, results, self.sample_rate_spin.value() * 1e6, fft_size, hop_size, window_type, model_type)
+        segment_size = int(self.segment_size_combo.currentText()) # Get segment size
+        self.mobilenet_tab.update_preprocessing(self.iq_data, results, self.sample_rate_spin.value() * 1e6, fft_size, hop_size, window_type, model_type, segment_size)
         
         # Hide progress bar
         self.progress_bar.setVisible(False)
