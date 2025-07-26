@@ -1,5 +1,15 @@
 # Update History
 
+## e58dca1 jaekuryu 2025-07-26 09:50:29 -0400 Adding Segment Size Combobox : pyMnet_gui.py based on docrules.md
+
+- Added a "Segment Size" combo box to the Parameters section, allowing users to select the number of samples per segment
+- Default segment size set to 50176 (224x224), with additional options: 16384, 32768, 65536, 131072
+- Updated get_settings, set_settings, and reset_settings to include segment size
+- AnalysisThread now accepts and uses the segment size parameter for segmentation
+- MobileNetPreprocessingTab updated to use the selected segment size for segmenting IQ data
+- All calls to update_preprocessing and analysis thread creation updated to pass segment size
+- Ensured segment size is respected throughout the analysis and preprocessing pipeline
+
 ## 32afa0e jaekuryu 2025-07-26 09:05:45 -0400 Remove unnecessary GUI component in main window : pyMnet_gui.py based on docrules.md
 
 - Removed redundant "Results" section from main control panel to eliminate duplication
