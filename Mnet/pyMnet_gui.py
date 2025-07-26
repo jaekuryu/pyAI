@@ -26,6 +26,38 @@ from scipy import signal
 # Import our existing spectrum sensing modules
 from pyMnet import IQTransform, analyze_spectrum, read_iq_file, segment_iq_data, MobileNetFeatureExtractor
 
+class ResNetFeatureExtractor(nn.Module):
+    """ResNet feature extractor (removes classifier head)"""
+    def __init__(self, model_type='resnet18', pretrained=True):
+        super(ResNetFeatureExtractor, self).__init__()
+        
+        # Load the appropriate ResNet model
+        if model_type == 'resnet18':
+            resnet = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=pretrained)
+            self.feature_dim = 512
+        elif model_type == 'resnet34':
+            resnet = torch.hub.load('pytorch/vision:v0.10.0', 'resnet34', pretrained=pretrained)
+            self.feature_dim = 512
+        elif model_type == 'resnet50':
+            resnet = torch.hub.load('pytorch/vision:v0.10.0', 'resnet50', pretrained=pretrained)
+            self.feature_dim = 2048
+        else:
+            raise ValueError(f"Unsupported ResNet model type: {model_type}")
+        
+        # Modify first layer for single-channel input (same as MobileNet)
+        resnet.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        
+        # Remove classifier head and keep feature extraction layers
+        self.features = nn.Sequential(*list(resnet.children())[:-2])  # Remove avgpool and fc
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.flatten = nn.Flatten()
+        
+    def forward(self, x):
+        x = self.features(x)
+        x = self.pool(x)
+        x = self.flatten(x)
+        return x
+
 class AnalysisThread(QThread):
     """Thread for running spectrum analysis to prevent GUI freezing"""
     progress = pyqtSignal(int)
@@ -61,7 +93,13 @@ class AnalysisThread(QThread):
             
             # Use feature extractor to get meaningful features (same as pyMnet.py)
             self.progress.emit(40)
-            feature_model = MobileNetFeatureExtractor(pretrained=True)
+            if self.model_type.startswith('mobilenet'):
+                feature_model = MobileNetFeatureExtractor(pretrained=True)
+            elif self.model_type.startswith('resnet'):
+                feature_model = ResNetFeatureExtractor(model_type=self.model_type, pretrained=True)
+            else:
+                raise ValueError(f"Unsupported model type: {self.model_type}")
+            
             feature_model.eval()
             
             features = []
@@ -172,7 +210,8 @@ class AnalysisThread(QThread):
                 'traffic_count': traffic_count,
                 'total_segments': len(segments),
                 'avg_confidence': avg_confidence,
-                'threshold_method': self.threshold_method # Add threshold method to results
+                'threshold_method': self.threshold_method,  # Add threshold method to results
+                'model_type': self.model_type  # Add model type to results
             }
             
             self.finished.emit(results)
@@ -541,6 +580,7 @@ Analysis Results:
 
 Overall Classification: {results.get('classification', 'N/A')}
 Overall Confidence: {results.get('confidence', 0):.3f}
+Model Type: {results.get('model_type', 'N/A')}
 
 Segment Analysis:
 ----------------
@@ -644,12 +684,13 @@ class SummaryTab(QWidget):
         feature_energy = analysis_results.get('feature_energy', [])
         energy_threshold = analysis_results.get('energy_threshold', 0)
         threshold_method = analysis_results.get('threshold_method', 'N/A')
+        model_type = analysis_results.get('model_type', 'N/A')
         
         if len(feature_energy) > 0:
             segment_indices = np.arange(len(feature_energy))
             ax3.plot(segment_indices, feature_energy, 'b-', linewidth=2, label='Feature Energy')
             ax3.axhline(y=energy_threshold, color='red', linestyle='--', label=f'Threshold ({threshold_method}): {energy_threshold:.3f}')
-            ax3.set_title(f'Feature Energy Over Time (Threshold: {threshold_method})', fontsize=8)
+            ax3.set_title(f'Feature Energy Over Time\n({model_type}, {threshold_method})', fontsize=8)
             ax3.set_xlabel('Segment Index', fontsize=8)
             ax3.set_ylabel('Feature Energy', fontsize=8)
             ax3.legend(fontsize=7)
@@ -808,7 +849,7 @@ class MobileNetPreprocessingTab(QWidget):
         spectrogram_224 = F.interpolate(spectrogram_tensor, size=(224, 224), mode='bilinear', align_corners=False).squeeze(0).squeeze(0).numpy()
         
         im3 = ax3.imshow(spectrogram_224, aspect='equal', cmap='viridis', origin='lower')
-        ax3.set_title('Step 3: 224x224 (Single Channel)', fontsize=10)
+        ax3.set_title(f'Step 3: 224x224 (Single Channel)\nModel: {model_type}', fontsize=10)
         ax3.set_xlabel('Pixel (224)', fontsize=7)
         ax3.set_ylabel('Pixel (224)', fontsize=7)
         ax3.tick_params(axis='both', labelsize=6)
@@ -949,7 +990,7 @@ class SpectrumSensingGUI(QMainWindow):
         
         self.model_label = QLabel("Model Type:")
         self.model_combo = QComboBox()
-        self.model_combo.addItems(['mobilenet_v2', 'mobilenet_v3_small', 'mobilenet_v3_large'])
+        self.model_combo.addItems(['mobilenet_v2', 'mobilenet_v3_small', 'mobilenet_v3_large', 'resnet18', 'resnet34', 'resnet50'])
         self.model_combo.setCurrentText('mobilenet_v2')
 
         self.threshold_method_label = QLabel("Threshold Method:")
@@ -1093,7 +1134,7 @@ class SpectrumSensingGUI(QMainWindow):
         self.tab_widget.addTab(self.freq_tab, "Frequency Domain")
         self.tab_widget.addTab(self.spec_tab, "Spectrogram")
         self.tab_widget.addTab(self.const_tab, "Constellation")
-        self.tab_widget.addTab(self.mobilenet_tab, "MobileNet Preprocessing") # Added MobileNetPreprocessingTab
+        self.tab_widget.addTab(self.mobilenet_tab, "Preprocessing") # Changed from "MobileNet Preprocessing"
         self.tab_widget.addTab(self.results_tab, "Results")
         self.tab_widget.addTab(self.summary_tab, "Summary") # Added SummaryTab
 
