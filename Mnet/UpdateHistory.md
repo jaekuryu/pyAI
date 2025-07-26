@@ -1,5 +1,20 @@
 # Update History
 
+## 3d378ea jaekuryu 2025-07-26 08:46:21 -0400 Plotting segmented spectrogram in Mobilenet Preprocess tab : pyMnet_gui.py based on docrules.md
+
+- Modified MobileNet Preprocessing tab to display spectrograms for specific segments instead of full IQ data
+- Added segment selection spin box with segment count display for user control
+- Implemented segment-based spectrogram computation using selected segment data
+- Added segment information display showing current segment number and total segments
+- Enhanced plot titles to include segment-specific information (e.g., "Segment 2/15")
+- Added segment duration and size annotations to preprocessing visualization
+- Implemented parameter persistence to enable segment switching without re-analysis
+- Added on_segment_changed method to handle dynamic segment selection updates
+- Increased default GUI window height from 800 to 1000 pixels for better visualization
+- Improved user experience with interactive segment-based spectrogram analysis
+- Maintained all existing preprocessing steps (dB scale, normalization, 224x224 resizing)
+- Enhanced MobileNet preprocessing pipeline visualization with segment-specific data
+
 ## 8c4d5e1 jaekuryu 2025-07-26 03:45:12 -0400 Parameterizing threshold setting method for feature energy classification based on docrules.md
 
 - Added threshold method parameterization to the GUI control panel (Median, Mean, Max-Mean)
