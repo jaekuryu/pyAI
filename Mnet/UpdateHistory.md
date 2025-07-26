@@ -1,5 +1,19 @@
 # Update History
 
+## 830fc13 jaekuryu 2025-07-26 10:15:57 -0400 Adding more options (advanced/automatic) for Threshold determination : pyMnet_gui.py based on docrules.md
+
+- Added four new advanced threshold methods to the "Threshold Method" dropdown: Otsu, Percentile, K-Means, and Adaptive
+- Implemented Otsu's method for automatic thresholding that minimizes intra-class variance
+- Added Percentile-based thresholding using 75th percentile of feature energy distribution
+- Implemented K-Means clustering (2-means) for threshold determination using simple iterative clustering
+- Added Adaptive thresholding based on local statistics using rolling mean and standard deviation
+- Updated AnalysisThread to accept and process the new threshold methods in classification logic
+- Added helper methods _otsu_threshold, _kmeans_threshold, and _adaptive_threshold for calculations
+- Enhanced threshold method selection to address 50:50 traffic/idle ratio issues
+- Maintained backward compatibility with existing threshold methods (Median, Mean, Max-Mean)
+- Improved spectrum sensing classification accuracy with more sophisticated thresholding algorithms
+- Updated GUI to provide users with advanced options for fine-tuning classification sensitivity
+
 ## e58dca1 jaekuryu 2025-07-26 09:50:29 -0400 Adding Segment Size Combobox : pyMnet_gui.py based on docrules.md
 
 - Added a "Segment Size" combo box to the Parameters section, allowing users to select the number of samples per segment
