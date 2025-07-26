@@ -1,5 +1,22 @@
 # Update History
 
+## 5b02744 jaekuryu 2025-07-26 02:49:42 -0400 Fixing Parameter application issue and Analysis Algorithm Issue based on docrules.md
+
+- Fixed core analysis algorithm discrepancy between GUI and command-line versions
+- Replaced simulated analysis with proper segment-based spectrum sensing approach
+- Implemented real feature extraction using MobileNetV2 model with single-channel input
+- Added statistical classification based on feature energy thresholding
+- Fixed channel mismatch error by ensuring single-channel spectrogram processing
+- Corrected MobileNet preprocessing tab to use full IQ data instead of single segment
+- Aligned hop_size parameter (256) with pyMnet.py reference implementation
+- Implemented dynamic parameter updates for FFT and Hop size in preprocessing visualization
+- Added on_parameter_changed method to handle real-time parameter updates
+- Updated Summary tab to display real analysis data including average spectrogram
+- Fixed ValueError issues in summary plotting with proper array length checks
+- Set default FFT size to 1024 across all GUI components for consistency
+- Enhanced Results tab to show detailed segment analysis and feature statistics
+- Improved preprocessing visualization with correct parameter application
+
 ## 33f8cf2 jaekuryu 2025-07-26 02:07:31 -0400 Adding Mobilenet Preprocessing Tab : pyMnet_gui.py based on docrules.md
 
 - Added new "MobileNet Preprocessing" tab to visualize spectrogram preprocessing steps
