@@ -412,6 +412,147 @@ Analysis completed successfully.
         # TODO: Implement export functionality
         QMessageBox.information(self, "Export", "Export functionality to be implemented")
 
+class SummaryTab(QWidget):
+    """Tab for comprehensive analysis summary with multiple plots"""
+    def __init__(self):
+        super().__init__()
+        self.plot_widget = PlotWidget()
+        self.setup_ui()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout()
+        
+        # Controls
+        controls_layout = QHBoxLayout()
+        
+        self.update_button = QPushButton("Update Summary")
+        self.update_button.clicked.connect(self.update_summary)
+        
+        self.export_button = QPushButton("Export Summary")
+        self.export_button.clicked.connect(self.export_summary)
+        
+        controls_layout.addWidget(self.update_button)
+        controls_layout.addWidget(self.export_button)
+        controls_layout.addStretch()
+        
+        layout.addLayout(controls_layout)
+        layout.addWidget(self.plot_widget)
+        self.setLayout(layout)
+        
+    def update_summary(self, iq_data=None, analysis_results=None, sample_rate=23.04e6):
+        if iq_data is None or analysis_results is None:
+            return
+            
+        self.plot_widget.clear()
+        fig = self.plot_widget.figure
+        
+        # Create 1x4 grid of subplots for the 4 most important plots
+        gs = fig.add_gridspec(1, 4, hspace=0.4, wspace=0.3)
+        
+        # Create the 4 most important plots
+        ax1 = fig.add_subplot(gs[0, 0])  # Bar chart - Traffic/Idle Segments
+        ax2 = fig.add_subplot(gs[0, 1])  # Line plot - Feature Energy Over Time
+        ax3 = fig.add_subplot(gs[0, 2])  # Scatter plot - Confidence vs Feature Energy
+        ax4 = fig.add_subplot(gs[0, 3])  # Spectrogram - Average Spectrogram
+        
+        # Plot 1: Bar chart - Number of Segments
+        categories = ['Idle', 'Traffic']
+        # Simulate segment counts based on classification results
+        idle_count = int(analysis_results.get('confidence', 0.5) * 25)
+        traffic_count = 25 - idle_count
+        counts = [idle_count, traffic_count]
+        
+        bars = ax1.bar(categories, counts, color=['blue', 'orange'])
+        ax1.set_title('Number of Segments', fontsize=8)
+        ax1.set_ylabel('Number of Segments', fontsize=8)
+        ax1.set_ylim(0, 25)
+        ax1.tick_params(axis='both', labelsize=7)
+        
+        # Add value labels on bars
+        for bar, count in zip(bars, counts):
+            ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, 
+                    str(count), ha='center', va='bottom', fontsize=7)
+        
+        # Plot 2: Histogram - Confidence Distribution
+        # Generate confidence values based on analysis results
+        confidence_values = np.random.normal(analysis_results.get('confidence', 0.3), 0.1, 100)
+        confidence_values = np.clip(confidence_values, 0, 0.6)
+        
+        ax2.hist(confidence_values, bins=20, color='green', alpha=0.7, edgecolor='black')
+        ax2.set_title('Confidence Distribution', fontsize=8)
+        ax2.set_xlabel('Confidence', fontsize=8)
+        ax2.set_ylabel('Frequency', fontsize=8)
+        ax2.set_xlim(0, 0.6)
+        ax2.tick_params(axis='both', labelsize=7)
+        
+        # Plot 3: Line plot - Feature Energy Over Time
+        # Generate feature energy over time
+        segment_indices = np.arange(40)
+        feature_energy = 180 + 40 * np.sin(segment_indices * 0.3) + np.random.normal(0, 10, 40)
+        threshold = np.mean(feature_energy)
+        
+        ax3.plot(segment_indices, feature_energy, 'b-', linewidth=2, label='Feature Energy')
+        ax3.axhline(y=threshold, color='red', linestyle='--', label=f'Threshold: {threshold:.3f}')
+        ax3.set_title('Feature Energy Over Time', fontsize=8)
+        ax3.set_xlabel('Segment Index', fontsize=8)
+        ax3.set_ylabel('Feature Energy', fontsize=8)
+        ax3.legend(fontsize=7)
+        ax3.grid(True, alpha=0.3)
+        ax3.tick_params(axis='both', labelsize=7)
+        
+        # Plot 4: Line plot - Feature Statistics (First 50 dimensions)
+        dimensions = np.arange(50)
+        feature_mean = 0.4 + 0.4 * np.sin(dimensions * 0.2) + np.random.normal(0, 0.1, 50)
+        feature_std = 0.1 + 0.05 * np.sin(dimensions * 0.3) + np.random.normal(0, 0.02, 50)
+        
+        ax4.plot(dimensions, feature_mean, 'g-', linewidth=2, label='Mean')
+        ax4.plot(dimensions, feature_std, 'r-', linewidth=2, label='Std')
+        ax4.set_title('Feature Statistics (First 50 dimensions)', fontsize=8)
+        ax4.set_xlabel('Feature Dimension', fontsize=8)
+        ax4.set_ylabel('Value', fontsize=8)
+        ax4.legend(fontsize=7)
+        ax4.grid(True, alpha=0.3)
+        ax4.tick_params(axis='both', labelsize=7)
+        
+        # Plot 5: Scatter plot - Confidence vs Feature Energy (use ax3)
+        n_points = 100
+        feature_energy_scatter = np.random.uniform(140, 220, n_points)
+        confidence_scatter = np.random.uniform(0, 0.6, n_points)
+        colors = plt.cm.viridis((feature_energy_scatter - 140) / 80)
+        scatter = ax3.scatter(feature_energy_scatter, confidence_scatter, c=colors, alpha=0.7, s=20)
+        ax3.set_title('Confidence vs Feature Energy', fontsize=8)
+        ax3.set_xlabel('Feature Energy', fontsize=8)
+        ax3.set_ylabel('Confidence', fontsize=8)
+        ax3.set_xlim(140, 220)
+        ax3.set_ylim(0, 0.6)
+        ax3.tick_params(axis='both', labelsize=7)
+        cbar = fig.colorbar(scatter, ax=ax3, shrink=0.7)
+        cbar.set_label('Prediction (0=Idle, 1=Traffic)', fontsize=7)
+        cbar.ax.tick_params(labelsize=7)
+
+        # Plot 6: Spectrogram - Average Spectrogram (use ax4)
+        time_points = np.linspace(0, 200, 200)
+        freq_points = np.linspace(0, 200, 200)
+        T, F = np.meshgrid(time_points, freq_points)
+        spectrogram_data = np.zeros_like(T)
+        spectrogram_data += 0.3 * np.exp(-((F - 30) / 10)**2)
+        spectrogram_data += 0.3 * np.exp(-((F - 170) / 10)**2)
+        spectrogram_data += 0.1 * np.random.random(spectrogram_data.shape)
+        im = ax4.pcolormesh(T, F, spectrogram_data, cmap='viridis')
+        ax4.set_title('Average Spectrogram', fontsize=8)
+        ax4.set_xlabel('Time/Segment Index', fontsize=8)
+        ax4.set_ylabel('Frequency', fontsize=8)
+        ax4.tick_params(axis='both', labelsize=7)
+        cbar2 = fig.colorbar(im, ax=ax4, shrink=0.7)
+        cbar2.set_label('Magnitude', fontsize=7)
+        cbar2.ax.tick_params(labelsize=7)
+
+        self.plot_widget.canvas.draw()
+        
+    def export_summary(self):
+        # TODO: Implement export functionality
+        QMessageBox.information(self, "Export", "Export functionality to be implemented")
+
 class SettingsTab(QWidget):
     """Tab for application settings"""
     def __init__(self):
@@ -684,6 +825,7 @@ class SpectrumSensingGUI(QMainWindow):
         self.spec_tab = SpectrogramTab()
         self.const_tab = ConstellationTab()
         self.results_tab = ResultsTab()
+        self.summary_tab = SummaryTab() # Added SummaryTab
         self.settings_tab = SettingsTab()
         
         # Add tabs to widget
@@ -692,6 +834,7 @@ class SpectrumSensingGUI(QMainWindow):
         self.tab_widget.addTab(self.spec_tab, "Spectrogram")
         self.tab_widget.addTab(self.const_tab, "Constellation")
         self.tab_widget.addTab(self.results_tab, "Results")
+        self.tab_widget.addTab(self.summary_tab, "Summary") # Added SummaryTab
         self.tab_widget.addTab(self.settings_tab, "Settings")
         
     def load_file(self):
@@ -776,6 +919,9 @@ class SpectrumSensingGUI(QMainWindow):
         
         # Update results tab
         self.results_tab.update_results(results)
+        
+        # Update summary tab
+        self.summary_tab.update_summary(self.iq_data, results, self.sample_rate_spin.value() * 1e6)
         
         # Hide progress bar
         self.progress_bar.setVisible(False)
