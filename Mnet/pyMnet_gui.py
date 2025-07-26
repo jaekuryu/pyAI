@@ -121,6 +121,18 @@ class AnalysisThread(QThread):
                 energy_threshold = np.mean(feature_energy)
             elif self.threshold_method == 'Max-Mean':
                 energy_threshold = np.max(feature_energy) - np.mean(feature_energy)  # For normalized data between 0 and 1
+            elif self.threshold_method == 'Otsu':
+                # Otsu's method for automatic thresholding
+                energy_threshold = self._otsu_threshold(feature_energy)
+            elif self.threshold_method == 'Percentile':
+                # Use 75th percentile as threshold
+                energy_threshold = np.percentile(feature_energy, 75)
+            elif self.threshold_method == 'K-Means':
+                # Simple 2-means clustering
+                energy_threshold = self._kmeans_threshold(feature_energy)
+            elif self.threshold_method == 'Adaptive':
+                # Adaptive threshold based on local statistics
+                energy_threshold = self._adaptive_threshold(feature_energy)
             else: # Default to median
                 energy_threshold = np.median(feature_energy)
             
@@ -167,6 +179,72 @@ class AnalysisThread(QThread):
             
         except Exception as e:
             self.error.emit(str(e))
+    
+    def _otsu_threshold(self, feature_energy):
+        """Otsu's method for automatic thresholding"""
+        # Create histogram
+        hist, bin_edges = np.histogram(feature_energy, bins=256, range=(feature_energy.min(), feature_energy.max()))
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        
+        # Calculate cumulative sums
+        total_pixels = np.sum(hist)
+        weight1 = np.cumsum(hist)
+        weight2 = total_pixels - weight1
+        
+        # Avoid division by zero
+        weight1 = weight1[:-1]
+        weight2 = weight2[:-1]
+        
+        # Calculate means
+        mean1 = np.cumsum(hist * bin_centers)[:-1] / (weight1 + 1e-8)
+        mean2 = (np.cumsum(hist * bin_centers)[-1] - np.cumsum(hist * bin_centers)[:-1]) / (weight2 + 1e-8)
+        
+        # Calculate variance
+        variance = weight1 * weight2 * (mean1 - mean2) ** 2
+        
+        # Find threshold that maximizes variance
+        threshold_idx = np.argmax(variance)
+        return bin_centers[threshold_idx]
+    
+    def _kmeans_threshold(self, feature_energy):
+        """Simple 2-means clustering for thresholding"""
+        # Initialize centroids
+        min_val, max_val = feature_energy.min(), feature_energy.max()
+        centroid1, centroid2 = min_val, max_val
+        
+        # Simple k-means iteration (max 10 iterations)
+        for _ in range(10):
+            # Assign points to nearest centroid
+            distances1 = np.abs(feature_energy - centroid1)
+            distances2 = np.abs(feature_energy - centroid2)
+            cluster1 = feature_energy[distances1 < distances2]
+            cluster2 = feature_energy[distances2 <= distances1]
+            
+            # Update centroids
+            if len(cluster1) > 0:
+                centroid1 = np.mean(cluster1)
+            if len(cluster2) > 0:
+                centroid2 = np.mean(cluster2)
+        
+        # Return threshold as midpoint between centroids
+        return (centroid1 + centroid2) / 2
+    
+    def _adaptive_threshold(self, feature_energy):
+        """Adaptive threshold based on local statistics"""
+        # Use rolling window to compute local statistics
+        window_size = min(10, len(feature_energy) // 4)
+        if window_size < 3:
+            window_size = 3
+        
+        # Compute rolling mean and std
+        rolling_mean = np.convolve(feature_energy, np.ones(window_size)/window_size, mode='same')
+        rolling_std = np.sqrt(np.convolve((feature_energy - rolling_mean)**2, np.ones(window_size)/window_size, mode='same'))
+        
+        # Adaptive threshold: global mean + local std factor
+        global_mean = np.mean(feature_energy)
+        local_factor = np.mean(rolling_std) / (np.std(feature_energy) + 1e-8)
+        
+        return global_mean + local_factor * np.std(feature_energy)
 
 class PlotWidget(QWidget):
     """Widget for displaying matplotlib plots"""
@@ -876,7 +954,7 @@ class SpectrumSensingGUI(QMainWindow):
 
         self.threshold_method_label = QLabel("Threshold Method:")
         self.threshold_method_combo = QComboBox()
-        self.threshold_method_combo.addItems(['Median', 'Mean', 'Max-Mean'])
+        self.threshold_method_combo.addItems(['Median', 'Mean', 'Max-Mean', 'Otsu', 'Percentile', 'K-Means', 'Adaptive'])
         self.threshold_method_combo.setCurrentText('Median')
         self.threshold_method_combo.currentTextChanged.connect(self.on_parameter_changed)
         
@@ -997,7 +1075,7 @@ class SpectrumSensingGUI(QMainWindow):
         self.hop_size_spin.setValue(1024)
         self.window_combo.setCurrentText('hanning')
         self.model_combo.setCurrentText('mobilenet_v2')
-        self.threshold_method_combo.setCurrentText('Median')
+        self.threshold_method_combo.setCurrentText('Otsu')  # Changed default to Otsu
         self.segment_size_combo.setCurrentText('50176')
 
     def create_tabs(self):
