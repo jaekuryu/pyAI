@@ -553,6 +553,104 @@ class SummaryTab(QWidget):
         # TODO: Implement export functionality
         QMessageBox.information(self, "Export", "Export functionality to be implemented")
 
+class MobileNetPreprocessingTab(QWidget):
+    """Tab for showing MobileNet preprocessing steps"""
+    def __init__(self):
+        super().__init__()
+        self.plot_widget = PlotWidget()
+        self.setup_ui()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout()
+        
+        # Controls
+        controls_layout = QHBoxLayout()
+        
+        self.update_button = QPushButton("Update Preprocessing")
+        self.update_button.clicked.connect(self.update_preprocessing)
+        
+        self.export_button = QPushButton("Export Preprocessing")
+        self.export_button.clicked.connect(self.export_preprocessing)
+        
+        controls_layout.addWidget(self.update_button)
+        controls_layout.addWidget(self.export_button)
+        controls_layout.addStretch()
+        
+        layout.addLayout(controls_layout)
+        layout.addWidget(self.plot_widget)
+        self.setLayout(layout)
+        
+    def update_preprocessing(self, iq_data=None, analysis_results=None, sample_rate=23.04e6):
+        if iq_data is None or analysis_results is None:
+            return
+            
+        self.plot_widget.clear()
+        fig = self.plot_widget.figure
+        
+        # Create 1x3 grid for the three preprocessing steps
+        gs = fig.add_gridspec(1, 3, hspace=0.3, wspace=0.3)
+        
+        # Adjust figure margins to move spectrograms down
+        fig.subplots_adjust(top=0.75, bottom=0.15)
+        
+        # Get the spectrogram from analysis results
+        spectrogram = analysis_results.get('spectrogram', None)
+        if spectrogram is None:
+            return
+            
+        # Step 1: Original spectrogram (dB scale)
+        ax1 = fig.add_subplot(gs[0, 0])
+        spectrogram_db = 20 * np.log10(spectrogram + 1e-10)
+        im1 = ax1.imshow(spectrogram_db, aspect='auto', cmap='viridis', origin='lower')
+        ax1.set_title('Step 1: dB Scale Spectrogram', fontsize=10)
+        ax1.set_xlabel('Time Frame', fontsize=7)
+        ax1.set_ylabel('Frequency Bin', fontsize=7)
+        ax1.tick_params(axis='both', labelsize=6)
+        cbar1 = fig.colorbar(im1, ax=ax1, shrink=0.8)
+        cbar1.set_label('Power (dB)', fontsize=7)
+        cbar1.ax.tick_params(labelsize=6)
+        
+        # Step 2: Normalized spectrogram [0,1]
+        ax2 = fig.add_subplot(gs[0, 1])
+        spectrogram_normalized = (spectrogram_db - spectrogram_db.min()) / (spectrogram_db.max() - spectrogram_db.min())
+        im2 = ax2.imshow(spectrogram_normalized, aspect='auto', cmap='viridis', origin='lower')
+        ax2.set_title('Step 2: Normalized [0,1]', fontsize=10)
+        ax2.set_xlabel('Time Frame', fontsize=7)
+        ax2.set_ylabel('Frequency Bin', fontsize=7)
+        ax2.tick_params(axis='both', labelsize=6)
+        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.8)
+        cbar2.set_label('Normalized Value', fontsize=7)
+        cbar2.ax.tick_params(labelsize=6)
+        
+        # Step 3: 224x224 RGB (show one channel)
+        ax3 = fig.add_subplot(gs[0, 2])
+        # Resize to 224x224
+        import torch.nn.functional as F
+        import torch
+        spectrogram_tensor = torch.from_numpy(spectrogram_normalized).float().unsqueeze(0).unsqueeze(0)
+        spectrogram_224 = F.interpolate(spectrogram_tensor, size=(224, 224), mode='bilinear', align_corners=False).squeeze(0).squeeze(0).numpy()
+        
+        im3 = ax3.imshow(spectrogram_224, aspect='equal', cmap='viridis', origin='lower')
+        ax3.set_title('Step 3: 224x224 (One Channel)', fontsize=10)
+        ax3.set_xlabel('Pixel (224)', fontsize=7)
+        ax3.set_ylabel('Pixel (224)', fontsize=7)
+        ax3.tick_params(axis='both', labelsize=6)
+        cbar3 = fig.colorbar(im3, ax=ax3, shrink=0.8)
+        cbar3.set_label('Normalized Value', fontsize=7)
+        cbar3.ax.tick_params(labelsize=6)
+        
+        # Add text annotations in a better position
+        fig.text(0.48, 0.98, f'Original Size: {spectrogram.shape[1]}x{spectrogram.shape[0]}', 
+                fontsize=8, verticalalignment='top', horizontalalignment='right', bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
+        fig.text(0.68, 0.98, f'Final Size: 224x224x3 (RGB)', 
+                fontsize=8, verticalalignment='top', horizontalalignment='right', bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
+        
+        self.plot_widget.canvas.draw()
+        
+    def export_preprocessing(self):
+        # TODO: Implement export functionality
+        QMessageBox.information(self, "Export", "Export functionality to be implemented")
+
 class SettingsTab(QWidget):
     """Tab for application settings"""
     def __init__(self):
@@ -826,6 +924,7 @@ class SpectrumSensingGUI(QMainWindow):
         self.const_tab = ConstellationTab()
         self.results_tab = ResultsTab()
         self.summary_tab = SummaryTab() # Added SummaryTab
+        self.mobilenet_tab = MobileNetPreprocessingTab() # Added MobileNetPreprocessingTab
         self.settings_tab = SettingsTab()
         
         # Add tabs to widget
@@ -833,6 +932,7 @@ class SpectrumSensingGUI(QMainWindow):
         self.tab_widget.addTab(self.freq_tab, "Frequency Domain")
         self.tab_widget.addTab(self.spec_tab, "Spectrogram")
         self.tab_widget.addTab(self.const_tab, "Constellation")
+        self.tab_widget.addTab(self.mobilenet_tab, "MobileNet Preprocessing") # Added MobileNetPreprocessingTab
         self.tab_widget.addTab(self.results_tab, "Results")
         self.tab_widget.addTab(self.summary_tab, "Summary") # Added SummaryTab
         self.tab_widget.addTab(self.settings_tab, "Settings")
@@ -922,6 +1022,9 @@ class SpectrumSensingGUI(QMainWindow):
         
         # Update summary tab
         self.summary_tab.update_summary(self.iq_data, results, self.sample_rate_spin.value() * 1e6)
+        
+        # Update MobileNet preprocessing tab
+        self.mobilenet_tab.update_preprocessing(self.iq_data, results, self.sample_rate_spin.value() * 1e6)
         
         # Hide progress bar
         self.progress_bar.setVisible(False)
