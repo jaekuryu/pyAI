@@ -2,8 +2,7 @@
 
 ## 8c4d5e1 jaekuryu 2025-07-26 03:45:12 -0400 Parameterizing threshold setting method for feature energy classification based on docrules.md
 
-- Added threshold method parameterization to the GUI control panel
-- Implemented three threshold methods: Median, Mean, and Max-Mean
+- Added threshold method parameterization to the GUI control panel (Median, Mean, Max-Mean)
 - Updated AnalysisThread to accept and use threshold_method parameter
 - Modified threshold calculation logic to support different statistical methods
 - Added threshold method display in Results tab and Summary tab
@@ -12,6 +11,9 @@
 - Maintained backward compatibility with default median threshold method
 - Improved user control over spectrum sensing classification sensitivity
 - Corrected Max-Mean threshold calculation to use max(energy) - mean(energy) for normalized data
+- Reflected the selected threshold method in the Results and Summary tabs
+- Updated settings save/load/reset to include the threshold method
+- Improved user control and transparency for spectrum sensing classification
 
 ## 7a1b3c2 jaekuryu 2025-07-26 03:15:18 -0400 Consolidating Parameters and Settings into unified interface based on docrules.md
 
