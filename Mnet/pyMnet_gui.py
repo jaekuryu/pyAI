@@ -32,7 +32,7 @@ class AnalysisThread(QThread):
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
     
-    def __init__(self, iq_data, sample_rate, fft_size, hop_size, window_type, model_type):
+    def __init__(self, iq_data, sample_rate, fft_size, hop_size, window_type, model_type, threshold_method):
         super().__init__()
         self.iq_data = iq_data
         self.sample_rate = sample_rate
@@ -40,6 +40,7 @@ class AnalysisThread(QThread):
         self.hop_size = hop_size
         self.window_type = window_type
         self.model_type = model_type
+        self.threshold_method = threshold_method
         
     def run(self):
         try:
@@ -112,8 +113,16 @@ class AnalysisThread(QThread):
             feature_std = np.std(features, axis=0)
             feature_energy = np.sum(features**2, axis=1)
             
-            # Simple threshold-based classification using feature statistics
-            energy_threshold = np.median(feature_energy)
+            # Parameterized threshold-based classification using feature statistics
+            if self.threshold_method == 'Median':
+                energy_threshold = np.median(feature_energy)
+            elif self.threshold_method == 'Mean':
+                energy_threshold = np.mean(feature_energy)
+            elif self.threshold_method == 'Max-Mean':
+                energy_threshold = np.max(feature_energy) - np.mean(feature_energy)  # For normalized data between 0 and 1
+            else: # Default to median
+                energy_threshold = np.median(feature_energy)
+            
             predictions = (feature_energy > energy_threshold).astype(int)
             
             # Calculate confidence based on distance from threshold
@@ -149,7 +158,8 @@ class AnalysisThread(QThread):
                 'idle_count': idle_count,
                 'traffic_count': traffic_count,
                 'total_segments': len(segments),
-                'avg_confidence': avg_confidence
+                'avg_confidence': avg_confidence,
+                'threshold_method': self.threshold_method # Add threshold method to results
             }
             
             self.finished.emit(results)
@@ -455,6 +465,7 @@ Traffic Percentage: {100 * results.get('traffic_count', 0) / max(results.get('to
 Feature Statistics:
 ------------------
 Average Confidence: {results.get('avg_confidence', 0):.3f}
+Threshold Method: {results.get('threshold_method', 'N/A')}
 Feature Energy Threshold: {results.get('energy_threshold', 0):.3f}
 Feature Mean: {results.get('feature_mean', [0])[0] if len(results.get('feature_mean', [])) > 0 else 0:.6f}
 Feature Std: {results.get('feature_std', [0])[0] if len(results.get('feature_std', [])) > 0 else 0:.6f}
@@ -544,12 +555,13 @@ class SummaryTab(QWidget):
         # Plot 3: Line plot - Feature Energy Over Time (REAL DATA)
         feature_energy = analysis_results.get('feature_energy', [])
         energy_threshold = analysis_results.get('energy_threshold', 0)
+        threshold_method = analysis_results.get('threshold_method', 'N/A')
         
         if len(feature_energy) > 0:
             segment_indices = np.arange(len(feature_energy))
             ax3.plot(segment_indices, feature_energy, 'b-', linewidth=2, label='Feature Energy')
-            ax3.axhline(y=energy_threshold, color='red', linestyle='--', label=f'Threshold: {energy_threshold:.3f}')
-            ax3.set_title('Feature Energy Over Time', fontsize=8)
+            ax3.axhline(y=energy_threshold, color='red', linestyle='--', label=f'Threshold ({threshold_method}): {energy_threshold:.3f}')
+            ax3.set_title(f'Feature Energy Over Time (Threshold: {threshold_method})', fontsize=8)
             ax3.set_xlabel('Segment Index', fontsize=8)
             ax3.set_ylabel('Feature Energy', fontsize=8)
             ax3.legend(fontsize=7)
@@ -612,7 +624,7 @@ class MobileNetPreprocessingTab(QWidget):
         layout.addWidget(self.plot_widget)
         self.setLayout(layout)
         
-    def update_preprocessing(self, iq_data=None, analysis_results=None, sample_rate=23.04e6, fft_size=1024, hop_size=256):
+    def update_preprocessing(self, iq_data=None, analysis_results=None, sample_rate=23.04e6, fft_size=1024, hop_size=256, window_type='hanning', model_type='mobilenet_v2'):
         if iq_data is None:
             return
             
@@ -683,133 +695,6 @@ class MobileNetPreprocessingTab(QWidget):
     def export_preprocessing(self):
         # TODO: Implement export functionality
         QMessageBox.information(self, "Export", "Export functionality to be implemented")
-
-class SettingsTab(QWidget):
-    """Tab for application settings"""
-    def __init__(self):
-        super().__init__()
-        self.setup_ui()
-        
-    def setup_ui(self):
-        layout = QVBoxLayout()
-        
-        # Analysis parameters
-        analysis_group = QGroupBox("Analysis Parameters")
-        analysis_layout = QGridLayout()
-        
-        self.sample_rate_label = QLabel("Sample Rate (MHz):")
-        self.sample_rate_spin = QDoubleSpinBox()
-        self.sample_rate_spin.setRange(1, 1000)
-        self.sample_rate_spin.setValue(23.04)
-        self.sample_rate_spin.setDecimals(2)
-        
-        self.fft_size_label = QLabel("FFT Size:")
-        self.fft_size_combo = QComboBox()
-        self.fft_size_combo.addItems(['256', '512', '1024', '2048', '4096'])
-        self.fft_size_combo.setCurrentText('1024')
-        
-        self.hop_size_label = QLabel("Hop Size:")
-        self.hop_size_spin = QSpinBox()
-        self.hop_size_spin.setRange(64, 2048)
-        self.hop_size_spin.setValue(1024)
-        
-        self.window_label = QLabel("Window Function:")
-        self.window_combo = QComboBox()
-        self.window_combo.addItems(['hanning', 'hamming', 'blackman'])
-        self.window_combo.setCurrentText('hanning')
-        
-        analysis_layout.addWidget(self.sample_rate_label, 0, 0)
-        analysis_layout.addWidget(self.sample_rate_spin, 0, 1)
-        analysis_layout.addWidget(self.fft_size_label, 1, 0)
-        analysis_layout.addWidget(self.fft_size_combo, 1, 1)
-        analysis_layout.addWidget(self.hop_size_label, 2, 0)
-        analysis_layout.addWidget(self.hop_size_spin, 2, 1)
-        analysis_layout.addWidget(self.window_label, 3, 0)
-        analysis_layout.addWidget(self.window_combo, 3, 1)
-        
-        analysis_group.setLayout(analysis_layout)
-        
-        # Model settings
-        model_group = QGroupBox("Model Settings")
-        model_layout = QGridLayout()
-        
-        self.model_label = QLabel("Model Type:")
-        self.model_combo = QComboBox()
-        self.model_combo.addItems(['mobilenet_v2', 'mobilenet_v3_small', 'mobilenet_v3_large'])
-        self.model_combo.setCurrentText('mobilenet_v2')
-        
-        model_layout.addWidget(self.model_label, 0, 0)
-        model_layout.addWidget(self.model_combo, 0, 1)
-        
-        model_group.setLayout(model_layout)
-        
-        # Save/Load buttons
-        button_layout = QHBoxLayout()
-        self.save_settings_button = QPushButton("Save Settings")
-        self.load_settings_button = QPushButton("Load Settings")
-        self.reset_settings_button = QPushButton("Reset to Defaults")
-        
-        self.save_settings_button.clicked.connect(self.save_settings)
-        self.load_settings_button.clicked.connect(self.load_settings)
-        self.reset_settings_button.clicked.connect(self.reset_settings)
-        
-        button_layout.addWidget(self.save_settings_button)
-        button_layout.addWidget(self.load_settings_button)
-        button_layout.addWidget(self.reset_settings_button)
-        
-        layout.addWidget(analysis_group)
-        layout.addWidget(model_group)
-        layout.addLayout(button_layout)
-        layout.addStretch()
-        
-        self.setLayout(layout)
-        
-    def get_settings(self):
-        return {
-            'sample_rate': self.sample_rate_spin.value() * 1e6,
-            'fft_size': int(self.fft_size_combo.currentText()),
-            'hop_size': self.hop_size_spin.value(),
-            'window_type': self.window_combo.currentText(),
-            'model_type': self.model_combo.currentText()
-        }
-        
-    def set_settings(self, settings):
-        if 'sample_rate' in settings:
-            self.sample_rate_spin.setValue(settings['sample_rate'] / 1e6)
-        if 'fft_size' in settings:
-            self.fft_size_combo.setCurrentText(str(settings['fft_size']))
-        if 'hop_size' in settings:
-            self.hop_size_spin.setValue(settings['hop_size'])
-        if 'window_type' in settings:
-            self.window_combo.setCurrentText(settings['window_type'])
-        if 'model_type' in settings:
-            self.model_combo.setCurrentText(settings['model_type'])
-            
-    def save_settings(self):
-        settings = self.get_settings()
-        filename, _ = QFileDialog.getSaveFileName(self, "Save Settings", "", "JSON Files (*.json)")
-        if filename:
-            with open(filename, 'w') as f:
-                json.dump(settings, f, indent=2)
-            QMessageBox.information(self, "Settings", "Settings saved successfully!")
-            
-    def load_settings(self):
-        filename, _ = QFileDialog.getOpenFileName(self, "Load Settings", "", "JSON Files (*.json)")
-        if filename:
-            try:
-                with open(filename, 'r') as f:
-                    settings = json.load(f)
-                self.set_settings(settings)
-                QMessageBox.information(self, "Settings", "Settings loaded successfully!")
-            except Exception as e:
-                QMessageBox.warning(self, "Error", f"Failed to load settings: {str(e)}")
-                
-    def reset_settings(self):
-        self.sample_rate_spin.setValue(23.04)
-        self.fft_size_combo.setCurrentText('1024')
-        self.hop_size_spin.setValue(1024)
-        self.window_combo.setCurrentText('hanning')
-        self.model_combo.setCurrentText('mobilenet_v2')
 
 class SpectrumSensingGUI(QMainWindow):
     """Main GUI application for spectrum sensing"""
@@ -918,14 +803,50 @@ class SpectrumSensingGUI(QMainWindow):
         self.hop_size_spin.setValue(1024)
         self.hop_size_spin.valueChanged.connect(self.on_parameter_changed)
         
+        self.window_label = QLabel("Window Function:")
+        self.window_combo = QComboBox()
+        self.window_combo.addItems(['hanning', 'hamming', 'blackman'])
+        self.window_combo.setCurrentText('hanning')
+        
+        self.model_label = QLabel("Model Type:")
+        self.model_combo = QComboBox()
+        self.model_combo.addItems(['mobilenet_v2', 'mobilenet_v3_small', 'mobilenet_v3_large'])
+        self.model_combo.setCurrentText('mobilenet_v2')
+
+        self.threshold_method_label = QLabel("Threshold Method:")
+        self.threshold_method_combo = QComboBox()
+        self.threshold_method_combo.addItems(['Median', 'Mean', 'Max-Mean'])
+        self.threshold_method_combo.setCurrentText('Median')
+        self.threshold_method_combo.currentTextChanged.connect(self.on_parameter_changed)
+        
         param_layout.addWidget(self.sample_rate_label, 0, 0)
         param_layout.addWidget(self.sample_rate_spin, 0, 1)
         param_layout.addWidget(self.fft_size_label, 1, 0)
         param_layout.addWidget(self.fft_size_combo, 1, 1)
         param_layout.addWidget(self.hop_size_label, 2, 0)
         param_layout.addWidget(self.hop_size_spin, 2, 1)
+        param_layout.addWidget(self.window_label, 3, 0)
+        param_layout.addWidget(self.window_combo, 3, 1)
+        param_layout.addWidget(self.model_label, 4, 0)
+        param_layout.addWidget(self.model_combo, 4, 1)
+        param_layout.addWidget(self.threshold_method_label, 5, 0)
+        param_layout.addWidget(self.threshold_method_combo, 5, 1)
         
         param_group.setLayout(param_layout)
+        
+        # Settings buttons
+        settings_layout = QHBoxLayout()
+        self.save_settings_button = QPushButton("Save Settings")
+        self.load_settings_button = QPushButton("Load Settings")
+        self.reset_settings_button = QPushButton("Reset")
+        
+        self.save_settings_button.clicked.connect(self.save_settings)
+        self.load_settings_button.clicked.connect(self.load_settings)
+        self.reset_settings_button.clicked.connect(self.reset_settings)
+        
+        settings_layout.addWidget(self.save_settings_button)
+        settings_layout.addWidget(self.load_settings_button)
+        settings_layout.addWidget(self.reset_settings_button)
         
         # Results group
         results_group = QGroupBox("Results")
@@ -944,6 +865,7 @@ class SpectrumSensingGUI(QMainWindow):
         # Add groups to control panel
         control_layout.addWidget(file_group)
         control_layout.addWidget(param_group)
+        control_layout.addLayout(settings_layout) # Added settings_layout
         control_layout.addWidget(results_group)
         control_layout.addStretch()
         
@@ -958,8 +880,67 @@ class SpectrumSensingGUI(QMainWindow):
             sample_rate = self.sample_rate_spin.value() * 1e6
             fft_size = int(self.fft_size_combo.currentText())
             hop_size = self.hop_size_spin.value()
-            self.mobilenet_tab.update_preprocessing(self.iq_data, None, sample_rate, fft_size, hop_size)
+            window_type = self.window_combo.currentText() # Get window type
+            model_type = self.model_combo.currentText() # Get model type
+            threshold_method = self.threshold_method_combo.currentText() # Get threshold method
+            self.mobilenet_tab.update_preprocessing(self.iq_data, None, sample_rate, fft_size, hop_size, window_type, model_type)
+    
+    def get_settings(self):
+        """Get current parameter settings"""
+        return {
+            'sample_rate': self.sample_rate_spin.value() * 1e6,
+            'fft_size': int(self.fft_size_combo.currentText()),
+            'hop_size': self.hop_size_spin.value(),
+            'window_type': self.window_combo.currentText(),
+            'model_type': self.model_combo.currentText(),
+            'threshold_method': self.threshold_method_combo.currentText()
+        }
         
+    def set_settings(self, settings):
+        """Set parameter settings"""
+        if 'sample_rate' in settings:
+            self.sample_rate_spin.setValue(settings['sample_rate'] / 1e6)
+        if 'fft_size' in settings:
+            self.fft_size_combo.setCurrentText(str(settings['fft_size']))
+        if 'hop_size' in settings:
+            self.hop_size_spin.setValue(settings['hop_size'])
+        if 'window_type' in settings:
+            self.window_combo.setCurrentText(settings['window_type'])
+        if 'model_type' in settings:
+            self.model_combo.setCurrentText(settings['model_type'])
+        if 'threshold_method' in settings:
+            self.threshold_method_combo.setCurrentText(settings['threshold_method'])
+            
+    def save_settings(self):
+        """Save current settings to file"""
+        settings = self.get_settings()
+        filename, _ = QFileDialog.getSaveFileName(self, "Save Settings", "", "JSON Files (*.json)")
+        if filename:
+            with open(filename, 'w') as f:
+                json.dump(settings, f, indent=2)
+            QMessageBox.information(self, "Settings", "Settings saved successfully!")
+            
+    def load_settings(self):
+        """Load settings from file"""
+        filename, _ = QFileDialog.getOpenFileName(self, "Load Settings", "", "JSON Files (*.json)")
+        if filename:
+            try:
+                with open(filename, 'r') as f:
+                    settings = json.load(f)
+                self.set_settings(settings)
+                QMessageBox.information(self, "Settings", "Settings loaded successfully!")
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to load settings: {str(e)}")
+                
+    def reset_settings(self):
+        """Reset settings to defaults"""
+        self.sample_rate_spin.setValue(23.04)
+        self.fft_size_combo.setCurrentText('1024')
+        self.hop_size_spin.setValue(1024)
+        self.window_combo.setCurrentText('hanning')
+        self.model_combo.setCurrentText('mobilenet_v2')
+        self.threshold_method_combo.setCurrentText('Median')
+
     def create_tabs(self):
         # Create tab instances
         self.time_tab = TimeDomainTab()
@@ -969,7 +950,6 @@ class SpectrumSensingGUI(QMainWindow):
         self.results_tab = ResultsTab()
         self.summary_tab = SummaryTab() # Added SummaryTab
         self.mobilenet_tab = MobileNetPreprocessingTab() # Added MobileNetPreprocessingTab
-        self.settings_tab = SettingsTab()
         
         # Add tabs to widget
         self.tab_widget.addTab(self.time_tab, "Time Domain")
@@ -979,8 +959,7 @@ class SpectrumSensingGUI(QMainWindow):
         self.tab_widget.addTab(self.mobilenet_tab, "MobileNet Preprocessing") # Added MobileNetPreprocessingTab
         self.tab_widget.addTab(self.results_tab, "Results")
         self.tab_widget.addTab(self.summary_tab, "Summary") # Added SummaryTab
-        self.tab_widget.addTab(self.settings_tab, "Settings")
-        
+
     def load_file(self):
         filename, _ = QFileDialog.getOpenFileName(
             self, "Load IQ File", "", "Binary Files (*.bin);;All Files (*)"
@@ -1023,7 +1002,10 @@ class SpectrumSensingGUI(QMainWindow):
         # Update MobileNet preprocessing tab with current GUI parameters
         fft_size = int(self.fft_size_combo.currentText())
         hop_size = self.hop_size_spin.value()
-        self.mobilenet_tab.update_preprocessing(self.iq_data, None, sample_rate, fft_size, hop_size)
+        window_type = self.window_combo.currentText() # Get window type
+        model_type = self.model_combo.currentText() # Get model type
+        threshold_method = self.threshold_method_combo.currentText() # Get threshold method
+        self.mobilenet_tab.update_preprocessing(self.iq_data, None, sample_rate, fft_size, hop_size, window_type, model_type)
         
     def start_analysis(self):
         if self.iq_data is None:
@@ -1034,12 +1016,13 @@ class SpectrumSensingGUI(QMainWindow):
         sample_rate = self.sample_rate_spin.value() * 1e6
         fft_size = int(self.fft_size_combo.currentText())
         hop_size = self.hop_size_spin.value()
-        window_type = 'hanning'  # Default
-        model_type = 'mobilenet_v2'  # Default
+        window_type = self.window_combo.currentText() # Get window type
+        model_type = self.model_combo.currentText() # Get model type
+        threshold_method = self.threshold_method_combo.currentText() # Get threshold method
         
         # Create and start analysis thread
         self.analysis_thread = AnalysisThread(
-            self.iq_data, sample_rate, fft_size, hop_size, window_type, model_type
+            self.iq_data, sample_rate, fft_size, hop_size, window_type, model_type, threshold_method
         )
         
         self.analysis_thread.progress.connect(self.update_progress)
@@ -1082,7 +1065,10 @@ class SpectrumSensingGUI(QMainWindow):
         # Update MobileNet preprocessing tab with current GUI parameters
         fft_size = int(self.fft_size_combo.currentText())
         hop_size = self.hop_size_spin.value()
-        self.mobilenet_tab.update_preprocessing(self.iq_data, results, self.sample_rate_spin.value() * 1e6, fft_size, hop_size)
+        window_type = self.window_combo.currentText() # Get window type
+        model_type = self.model_combo.currentText() # Get model type
+        threshold_method = self.threshold_method_combo.currentText() # Get threshold method
+        self.mobilenet_tab.update_preprocessing(self.iq_data, results, self.sample_rate_spin.value() * 1e6, fft_size, hop_size, window_type, model_type)
         
         # Hide progress bar
         self.progress_bar.setVisible(False)

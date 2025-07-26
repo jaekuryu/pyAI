@@ -1,5 +1,29 @@
 # Update History
 
+## 8c4d5e1 jaekuryu 2025-07-26 03:45:12 -0400 Parameterizing threshold setting method for feature energy classification based on docrules.md
+
+- Added threshold method parameterization to the GUI control panel
+- Implemented three threshold methods: Median, Mean, and Max-Mean
+- Updated AnalysisThread to accept and use threshold_method parameter
+- Modified threshold calculation logic to support different statistical methods
+- Added threshold method display in Results tab and Summary tab
+- Updated settings save/load functionality to include threshold method
+- Enhanced feature energy visualization to show selected threshold method
+- Maintained backward compatibility with default median threshold method
+- Improved user control over spectrum sensing classification sensitivity
+- Corrected Max-Mean threshold calculation to use max(energy) - mean(energy) for normalized data
+
+## 7a1b3c2 jaekuryu 2025-07-26 03:15:18 -0400 Consolidating Parameters and Settings into unified interface based on docrules.md
+
+- Consolidated all parameters from Settings tab into the main Parameters panel
+- Added Window Function and Model Type controls to the Parameters section
+- Integrated save/load/reset functionality directly into the Parameters panel
+- Removed redundant Settings tab to eliminate confusion and duplication
+- Ensured all FFT and Hop parameters are consistently used across preprocessing and analysis
+- Added real-time parameter synchronization for MobileNet preprocessing visualization
+- Simplified interface by having all configuration in one accessible location
+- Maintained all save/load functionality while improving user experience
+
 ## 5b02744 jaekuryu 2025-07-26 02:49:42 -0400 Fixing Parameter application issue and Analysis Algorithm Issue based on docrules.md
 
 - Fixed core analysis algorithm discrepancy between GUI and command-line versions
