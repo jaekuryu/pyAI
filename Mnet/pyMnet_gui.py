@@ -6,6 +6,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 import torch
+import torch.nn as nn
 import torchvision.transforms as transforms
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QVBoxLayout, 
                              QHBoxLayout, QWidget, QPushButton, QLabel, QFileDialog,
@@ -13,17 +14,17 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QVBoxLayout,
                              QGridLayout, QProgressBar, QTextEdit, QTableWidget,
                              QTableWidgetItem, QSplitter, QFrame, QMessageBox,
                              QSlider, QCheckBox, QLineEdit, QStatusBar, QToolBar,
-                             QMenu, QMenuBar)
+                             QMenu, QMenuBar, QFormLayout)
 from PyQt6.QtGui import QIcon, QFont, QPixmap, QAction
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt6.QtGui import QIcon, QFont, QPixmap
 import pandas as pd
 from pathlib import Path
 import pickle
 import json
+from scipy import signal
 
 # Import our existing spectrum sensing modules
-from pyMnet import IQTransform, analyze_spectrum, read_iq_file
+from pyMnet import IQTransform, analyze_spectrum, read_iq_file, segment_iq_data, MobileNetFeatureExtractor
 
 class AnalysisThread(QThread):
     """Thread for running spectrum analysis to prevent GUI freezing"""
@@ -51,62 +52,104 @@ class AnalysisThread(QThread):
                 hop_size=self.hop_size
             )
             
-            # Compute spectrogram
-            self.progress.emit(30)
-            spectrogram = iq_transform.compute_spectrogram(complex_data)
+            # Segment the IQ data (same as pyMnet.py)
+            self.progress.emit(20)
+            segments = segment_iq_data(self.iq_data, segment_length=4096, overlap=0.5)
+            print(f"Created {len(segments)} segments for analysis")
             
-            # Prepare for MobileNet
+            # Use feature extractor to get meaningful features (same as pyMnet.py)
+            self.progress.emit(40)
+            feature_model = MobileNetFeatureExtractor(pretrained=True)
+            feature_model.eval()
+            
+            features = []
+            spectrograms = []
+            
+            # Process each segment individually
             self.progress.emit(60)
-            # Normalize and resize spectrogram for MobileNet input
-            spectrogram_db = 20 * np.log10(spectrogram + 1e-10)
-            spectrogram_normalized = (spectrogram_db - spectrogram_db.min()) / (spectrogram_db.max() - spectrogram_db.min())
-            
-            # Convert to RGB image format
-            spectrogram_rgb = np.stack([spectrogram_normalized] * 3, axis=-1)
-            
-            # Load pretrained MobileNet
-            model = torch.hub.load('pytorch/vision:v0.10.0', 'mobilenet_v2', pretrained=True)
-            model.eval()
-            
-            # Remove classification layer for feature extraction
-            model.classifier = torch.nn.Identity()
-            
-            # Transform for MobileNet input
-            transform = transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.Resize((224, 224)),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-            
-            # Process spectrogram
-            self.progress.emit(80)
-            img = transform(spectrogram_rgb).unsqueeze(0)
-            
             with torch.no_grad():
-                features = model(img)
+                for idx, segment in enumerate(segments):
+                    # Convert segment to complex
+                    complex_segment = segment[:, 0] + 1j * segment[:, 1]
+                    
+                    # Compute spectrogram for this segment
+                    spectrogram = iq_transform.compute_spectrogram(complex_segment)
+                    
+                    # Prepare for MobileNet (same preprocessing as pyMnet.py)
+                    spectrogram_db = 20 * np.log10(spectrogram + 1e-10)
+                    spectrogram_normalized = (spectrogram_db - spectrogram_db.min()) / (spectrogram_db.max() - spectrogram_db.min())
+                    
+                    # Keep as single channel (don't convert to RGB) since MobileNetFeatureExtractor expects 1 channel
+                    # spectrogram_rgb = np.stack([spectrogram_normalized] * 3, axis=-1)  # REMOVED
+                    
+                    # Transform for MobileNet input (single channel)
+                    transform = transforms.Compose([
+                        transforms.ToPILImage(),
+                        transforms.Resize((224, 224)),
+                        transforms.ToTensor(),
+                        # Remove normalization since we're using single channel
+                        # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # REMOVED
+                    ])
+                    
+                    # Extract features (single channel input)
+                    img = transform(spectrogram_normalized).unsqueeze(0)  # Shape: (1, 1, 224, 224)
+                    feature = feature_model(img).cpu().numpy().flatten()
+                    features.append(feature)
+                    spectrograms.append(spectrogram)
+                    
+                    # Update progress
+                    if idx % 5 == 0:  # Update every 5 segments
+                        progress = 60 + int(30 * idx / len(segments))
+                        self.progress.emit(progress)
             
-            # Simple classification based on feature statistics
-            feature_mean = features.mean().item()
-            feature_std = features.std().item()
+            # Statistical analysis of features (same as pyMnet.py)
+            self.progress.emit(90)
+            features = np.array(features)
+            spectrograms = np.array(spectrograms)
             
-            # Heuristic classification (can be improved with trained classifier)
-            if feature_std > 0.1:  # High variance suggests traffic
-                classification = "Traffic"
-                confidence = min(0.9, feature_std * 2)
-            else:
-                classification = "Idle"
-                confidence = min(0.9, (1 - feature_std) * 2)
+            # Calculate feature statistics
+            feature_mean = np.mean(features, axis=0)
+            feature_std = np.std(features, axis=0)
+            feature_energy = np.sum(features**2, axis=1)
+            
+            # Simple threshold-based classification using feature statistics
+            energy_threshold = np.median(feature_energy)
+            predictions = (feature_energy > energy_threshold).astype(int)
+            
+            # Calculate confidence based on distance from threshold
+            confidences = np.abs(feature_energy - energy_threshold) / (np.max(feature_energy) - np.min(feature_energy) + 1e-8)
+            confidences = np.clip(confidences, 0, 1)
+            
+            labels = ["traffic" if p == 1 else "idle" for p in predictions]
+            
+            # Calculate summary statistics
+            idle_count = predictions.tolist().count(0)
+            traffic_count = predictions.tolist().count(1)
+            avg_confidence = np.mean(confidences)
+            
+            # Overall classification based on majority
+            overall_classification = "Traffic" if traffic_count > idle_count else "Idle"
+            overall_confidence = max(traffic_count, idle_count) / len(predictions)
             
             self.progress.emit(100)
             
             results = {
-                'spectrogram': spectrogram,
-                'features': features.numpy(),
-                'classification': classification,
-                'confidence': confidence,
+                'spectrogram': spectrograms[0] if len(spectrograms) > 0 else None,  # Use first segment for display
+                'spectrograms': spectrograms,  # All spectrograms for average calculation
+                'features': features,
+                'predictions': predictions,
+                'confidences': confidences,
+                'labels': labels,
+                'classification': overall_classification,
+                'confidence': overall_confidence,
                 'feature_mean': feature_mean,
-                'feature_std': feature_std
+                'feature_std': feature_std,
+                'feature_energy': feature_energy,
+                'energy_threshold': energy_threshold,
+                'idle_count': idle_count,
+                'traffic_count': traffic_count,
+                'total_segments': len(segments),
+                'avg_confidence': avg_confidence
             }
             
             self.finished.emit(results)
@@ -201,7 +244,7 @@ class FrequencyDomainTab(QWidget):
         self.fft_size_label = QLabel("FFT Size:")
         self.fft_size_combo = QComboBox()
         self.fft_size_combo.addItems(['256', '512', '1024', '2048', '4096'])
-        self.fft_size_combo.setCurrentText('4096')
+        self.fft_size_combo.setCurrentText('1024')
         self.fft_size_combo.currentTextChanged.connect(self.update_plot)
         
         self.db_scale_check = QCheckBox("dB Scale")
@@ -398,10 +441,23 @@ class ResultsTab(QWidget):
 Analysis Results:
 ================
 
-Classification: {results.get('classification', 'N/A')}
-Confidence: {results.get('confidence', 0):.3f}
-Feature Mean: {results.get('feature_mean', 0):.6f}
-Feature Std: {results.get('feature_std', 0):.6f}
+Overall Classification: {results.get('classification', 'N/A')}
+Overall Confidence: {results.get('confidence', 0):.3f}
+
+Segment Analysis:
+----------------
+Total Segments Analyzed: {results.get('total_segments', 0)}
+Segments Classified as Idle: {results.get('idle_count', 0)}
+Segments Classified as Traffic: {results.get('traffic_count', 0)}
+Idle Percentage: {100 * results.get('idle_count', 0) / max(results.get('total_segments', 1), 1):.1f}%
+Traffic Percentage: {100 * results.get('traffic_count', 0) / max(results.get('total_segments', 1), 1):.1f}%
+
+Feature Statistics:
+------------------
+Average Confidence: {results.get('avg_confidence', 0):.3f}
+Feature Energy Threshold: {results.get('energy_threshold', 0):.3f}
+Feature Mean: {results.get('feature_mean', [0])[0] if len(results.get('feature_mean', [])) > 0 else 0:.6f}
+Feature Std: {results.get('feature_std', [0])[0] if len(results.get('feature_std', [])) > 0 else 0:.6f}
 
 Analysis completed successfully.
         """
@@ -451,21 +507,20 @@ class SummaryTab(QWidget):
         
         # Create the 4 most important plots
         ax1 = fig.add_subplot(gs[0, 0])  # Bar chart - Traffic/Idle Segments
-        ax2 = fig.add_subplot(gs[0, 1])  # Line plot - Feature Energy Over Time
-        ax3 = fig.add_subplot(gs[0, 2])  # Scatter plot - Confidence vs Feature Energy
+        ax2 = fig.add_subplot(gs[0, 1])  # Histogram - Confidence Distribution
+        ax3 = fig.add_subplot(gs[0, 2])  # Line plot - Feature Energy Over Time
         ax4 = fig.add_subplot(gs[0, 3])  # Spectrogram - Average Spectrogram
         
-        # Plot 1: Bar chart - Number of Segments
+        # Plot 1: Bar chart - Number of Segments (REAL DATA)
         categories = ['Idle', 'Traffic']
-        # Simulate segment counts based on classification results
-        idle_count = int(analysis_results.get('confidence', 0.5) * 25)
-        traffic_count = 25 - idle_count
+        idle_count = analysis_results.get('idle_count', 0)
+        traffic_count = analysis_results.get('traffic_count', 0)
         counts = [idle_count, traffic_count]
         
         bars = ax1.bar(categories, counts, color=['blue', 'orange'])
         ax1.set_title('Number of Segments', fontsize=8)
         ax1.set_ylabel('Number of Segments', fontsize=8)
-        ax1.set_ylim(0, 25)
+        ax1.set_ylim(0, max(counts) * 1.2 if counts else 25)
         ax1.tick_params(axis='both', labelsize=7)
         
         # Add value labels on bars
@@ -473,79 +528,56 @@ class SummaryTab(QWidget):
             ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, 
                     str(count), ha='center', va='bottom', fontsize=7)
         
-        # Plot 2: Histogram - Confidence Distribution
-        # Generate confidence values based on analysis results
-        confidence_values = np.random.normal(analysis_results.get('confidence', 0.3), 0.1, 100)
-        confidence_values = np.clip(confidence_values, 0, 0.6)
+        # Plot 2: Histogram - Confidence Distribution (REAL DATA)
+        confidences = analysis_results.get('confidences', [])
+        if len(confidences) > 0:
+            ax2.hist(confidences, bins=20, color='green', alpha=0.7, edgecolor='black')
+            ax2.set_title('Confidence Distribution', fontsize=8)
+            ax2.set_xlabel('Confidence', fontsize=8)
+            ax2.set_ylabel('Frequency', fontsize=8)
+            ax2.set_xlim(0, 1)
+            ax2.tick_params(axis='both', labelsize=7)
+        else:
+            ax2.text(0.5, 0.5, 'No confidence data', ha='center', va='center', transform=ax2.transAxes)
+            ax2.set_title('Confidence Distribution', fontsize=8)
         
-        ax2.hist(confidence_values, bins=20, color='green', alpha=0.7, edgecolor='black')
-        ax2.set_title('Confidence Distribution', fontsize=8)
-        ax2.set_xlabel('Confidence', fontsize=8)
-        ax2.set_ylabel('Frequency', fontsize=8)
-        ax2.set_xlim(0, 0.6)
-        ax2.tick_params(axis='both', labelsize=7)
+        # Plot 3: Line plot - Feature Energy Over Time (REAL DATA)
+        feature_energy = analysis_results.get('feature_energy', [])
+        energy_threshold = analysis_results.get('energy_threshold', 0)
         
-        # Plot 3: Line plot - Feature Energy Over Time
-        # Generate feature energy over time
-        segment_indices = np.arange(40)
-        feature_energy = 180 + 40 * np.sin(segment_indices * 0.3) + np.random.normal(0, 10, 40)
-        threshold = np.mean(feature_energy)
+        if len(feature_energy) > 0:
+            segment_indices = np.arange(len(feature_energy))
+            ax3.plot(segment_indices, feature_energy, 'b-', linewidth=2, label='Feature Energy')
+            ax3.axhline(y=energy_threshold, color='red', linestyle='--', label=f'Threshold: {energy_threshold:.3f}')
+            ax3.set_title('Feature Energy Over Time', fontsize=8)
+            ax3.set_xlabel('Segment Index', fontsize=8)
+            ax3.set_ylabel('Feature Energy', fontsize=8)
+            ax3.legend(fontsize=7)
+            ax3.grid(True, alpha=0.3)
+            ax3.tick_params(axis='both', labelsize=7)
+        else:
+            ax3.text(0.5, 0.5, 'No feature energy data', ha='center', va='center', transform=ax3.transAxes)
+            ax3.set_title('Feature Energy Over Time', fontsize=8)
         
-        ax3.plot(segment_indices, feature_energy, 'b-', linewidth=2, label='Feature Energy')
-        ax3.axhline(y=threshold, color='red', linestyle='--', label=f'Threshold: {threshold:.3f}')
-        ax3.set_title('Feature Energy Over Time', fontsize=8)
-        ax3.set_xlabel('Segment Index', fontsize=8)
-        ax3.set_ylabel('Feature Energy', fontsize=8)
-        ax3.legend(fontsize=7)
-        ax3.grid(True, alpha=0.3)
-        ax3.tick_params(axis='both', labelsize=7)
+        # Plot 4: Average Spectrogram (REAL DATA)
+        spectrograms = analysis_results.get('spectrograms', [])
         
-        # Plot 4: Line plot - Feature Statistics (First 50 dimensions)
-        dimensions = np.arange(50)
-        feature_mean = 0.4 + 0.4 * np.sin(dimensions * 0.2) + np.random.normal(0, 0.1, 50)
-        feature_std = 0.1 + 0.05 * np.sin(dimensions * 0.3) + np.random.normal(0, 0.02, 50)
-        
-        ax4.plot(dimensions, feature_mean, 'g-', linewidth=2, label='Mean')
-        ax4.plot(dimensions, feature_std, 'r-', linewidth=2, label='Std')
-        ax4.set_title('Feature Statistics (First 50 dimensions)', fontsize=8)
-        ax4.set_xlabel('Feature Dimension', fontsize=8)
-        ax4.set_ylabel('Value', fontsize=8)
-        ax4.legend(fontsize=7)
-        ax4.grid(True, alpha=0.3)
-        ax4.tick_params(axis='both', labelsize=7)
-        
-        # Plot 5: Scatter plot - Confidence vs Feature Energy (use ax3)
-        n_points = 100
-        feature_energy_scatter = np.random.uniform(140, 220, n_points)
-        confidence_scatter = np.random.uniform(0, 0.6, n_points)
-        colors = plt.cm.viridis((feature_energy_scatter - 140) / 80)
-        scatter = ax3.scatter(feature_energy_scatter, confidence_scatter, c=colors, alpha=0.7, s=20)
-        ax3.set_title('Confidence vs Feature Energy', fontsize=8)
-        ax3.set_xlabel('Feature Energy', fontsize=8)
-        ax3.set_ylabel('Confidence', fontsize=8)
-        ax3.set_xlim(140, 220)
-        ax3.set_ylim(0, 0.6)
-        ax3.tick_params(axis='both', labelsize=7)
-        cbar = fig.colorbar(scatter, ax=ax3, shrink=0.7)
-        cbar.set_label('Prediction (0=Idle, 1=Traffic)', fontsize=7)
-        cbar.ax.tick_params(labelsize=7)
-
-        # Plot 6: Spectrogram - Average Spectrogram (use ax4)
-        time_points = np.linspace(0, 200, 200)
-        freq_points = np.linspace(0, 200, 200)
-        T, F = np.meshgrid(time_points, freq_points)
-        spectrogram_data = np.zeros_like(T)
-        spectrogram_data += 0.3 * np.exp(-((F - 30) / 10)**2)
-        spectrogram_data += 0.3 * np.exp(-((F - 170) / 10)**2)
-        spectrogram_data += 0.1 * np.random.random(spectrogram_data.shape)
-        im = ax4.pcolormesh(T, F, spectrogram_data, cmap='viridis')
-        ax4.set_title('Average Spectrogram', fontsize=8)
-        ax4.set_xlabel('Time/Segment Index', fontsize=8)
-        ax4.set_ylabel('Frequency', fontsize=8)
-        ax4.tick_params(axis='both', labelsize=7)
-        cbar2 = fig.colorbar(im, ax=ax4, shrink=0.7)
-        cbar2.set_label('Magnitude', fontsize=7)
-        cbar2.ax.tick_params(labelsize=7)
+        if len(spectrograms) > 0:
+            # Calculate average spectrogram from all segments
+            avg_spectrogram = np.mean(spectrograms, axis=0)
+            im4 = ax4.imshow(avg_spectrogram, aspect='auto', cmap='viridis', origin='lower')
+            ax4.set_title('Average Spectrogram', fontsize=8)
+            ax4.set_xlabel('Time Frame', fontsize=8)
+            ax4.set_ylabel('Frequency Bin', fontsize=8)
+            ax4.tick_params(axis='both', labelsize=7)
+            
+            # Add colorbar
+            cbar4 = fig.colorbar(im4, ax=ax4, shrink=0.8)
+            cbar4.set_label('Magnitude', fontsize=7)
+            cbar4.ax.tick_params(labelsize=6)
+        else:
+            ax4.text(0.5, 0.5, 'No spectrogram data', ha='center', va='center', transform=ax4.transAxes)
+            ax4.set_title('Average Spectrogram', fontsize=8)
 
         self.plot_widget.canvas.draw()
         
@@ -580,8 +612,8 @@ class MobileNetPreprocessingTab(QWidget):
         layout.addWidget(self.plot_widget)
         self.setLayout(layout)
         
-    def update_preprocessing(self, iq_data=None, analysis_results=None, sample_rate=23.04e6):
-        if iq_data is None or analysis_results is None:
+    def update_preprocessing(self, iq_data=None, analysis_results=None, sample_rate=23.04e6, fft_size=1024, hop_size=256):
+        if iq_data is None:
             return
             
         self.plot_widget.clear()
@@ -593,10 +625,11 @@ class MobileNetPreprocessingTab(QWidget):
         # Adjust figure margins to move spectrograms down
         fig.subplots_adjust(top=0.75, bottom=0.15)
         
-        # Get the spectrogram from analysis results
-        spectrogram = analysis_results.get('spectrogram', None)
-        if spectrogram is None:
-            return
+        # Compute spectrogram from full IQ data (not just one segment)
+        from pyMnet import IQTransform
+        iq_transform = IQTransform(fft_size=fft_size, hop_size=hop_size)
+        complex_data = iq_data[:, 0] + 1j * iq_data[:, 1]
+        spectrogram = iq_transform.compute_spectrogram(complex_data)
             
         # Step 1: Original spectrogram (dB scale)
         ax1 = fig.add_subplot(gs[0, 0])
@@ -622,7 +655,7 @@ class MobileNetPreprocessingTab(QWidget):
         cbar2.set_label('Normalized Value', fontsize=7)
         cbar2.ax.tick_params(labelsize=6)
         
-        # Step 3: 224x224 RGB (show one channel)
+        # Step 3: 224x224 Single Channel (not RGB)
         ax3 = fig.add_subplot(gs[0, 2])
         # Resize to 224x224
         import torch.nn.functional as F
@@ -631,7 +664,7 @@ class MobileNetPreprocessingTab(QWidget):
         spectrogram_224 = F.interpolate(spectrogram_tensor, size=(224, 224), mode='bilinear', align_corners=False).squeeze(0).squeeze(0).numpy()
         
         im3 = ax3.imshow(spectrogram_224, aspect='equal', cmap='viridis', origin='lower')
-        ax3.set_title('Step 3: 224x224 (One Channel)', fontsize=10)
+        ax3.set_title('Step 3: 224x224 (Single Channel)', fontsize=10)
         ax3.set_xlabel('Pixel (224)', fontsize=7)
         ax3.set_ylabel('Pixel (224)', fontsize=7)
         ax3.tick_params(axis='both', labelsize=6)
@@ -642,7 +675,7 @@ class MobileNetPreprocessingTab(QWidget):
         # Add text annotations in a better position
         fig.text(0.48, 0.98, f'Original Size: {spectrogram.shape[1]}x{spectrogram.shape[0]}', 
                 fontsize=8, verticalalignment='top', horizontalalignment='right', bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
-        fig.text(0.68, 0.98, f'Final Size: 224x224x3 (RGB)', 
+        fig.text(0.68, 0.98, f'Final Size: 224x224x1 (Single Channel)', 
                 fontsize=8, verticalalignment='top', horizontalalignment='right', bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
         
         self.plot_widget.canvas.draw()
@@ -673,7 +706,7 @@ class SettingsTab(QWidget):
         self.fft_size_label = QLabel("FFT Size:")
         self.fft_size_combo = QComboBox()
         self.fft_size_combo.addItems(['256', '512', '1024', '2048', '4096'])
-        self.fft_size_combo.setCurrentText('4096')
+        self.fft_size_combo.setCurrentText('1024')
         
         self.hop_size_label = QLabel("Hop Size:")
         self.hop_size_spin = QSpinBox()
@@ -773,7 +806,7 @@ class SettingsTab(QWidget):
                 
     def reset_settings(self):
         self.sample_rate_spin.setValue(23.04)
-        self.fft_size_combo.setCurrentText('4096')
+        self.fft_size_combo.setCurrentText('1024')
         self.hop_size_spin.setValue(1024)
         self.window_combo.setCurrentText('hanning')
         self.model_combo.setCurrentText('mobilenet_v2')
@@ -876,12 +909,14 @@ class SpectrumSensingGUI(QMainWindow):
         self.fft_size_label = QLabel("FFT Size:")
         self.fft_size_combo = QComboBox()
         self.fft_size_combo.addItems(['256', '512', '1024', '2048', '4096'])
-        self.fft_size_combo.setCurrentText('4096')
+        self.fft_size_combo.setCurrentText('1024')
+        self.fft_size_combo.currentTextChanged.connect(self.on_parameter_changed)
         
         self.hop_size_label = QLabel("Hop Size:")
         self.hop_size_spin = QSpinBox()
         self.hop_size_spin.setRange(64, 2048)
         self.hop_size_spin.setValue(1024)
+        self.hop_size_spin.valueChanged.connect(self.on_parameter_changed)
         
         param_layout.addWidget(self.sample_rate_label, 0, 0)
         param_layout.addWidget(self.sample_rate_spin, 0, 1)
@@ -915,6 +950,15 @@ class SpectrumSensingGUI(QMainWindow):
         # Add control panel to splitter
         splitter.addWidget(control_panel)
         splitter.setSizes([300, 900])  # Control panel width
+        
+    def on_parameter_changed(self):
+        """Handle parameter changes in the control panel"""
+        if self.iq_data is not None:
+            # Update MobileNet preprocessing tab with new parameters
+            sample_rate = self.sample_rate_spin.value() * 1e6
+            fft_size = int(self.fft_size_combo.currentText())
+            hop_size = self.hop_size_spin.value()
+            self.mobilenet_tab.update_preprocessing(self.iq_data, None, sample_rate, fft_size, hop_size)
         
     def create_tabs(self):
         # Create tab instances
@@ -975,6 +1019,12 @@ class SpectrumSensingGUI(QMainWindow):
         self.spec_tab.update_plot(self.iq_data, sample_rate)
         self.const_tab.update_plot(self.iq_data)
         
+        # Update preprocessing tab with full IQ data
+        # Update MobileNet preprocessing tab with current GUI parameters
+        fft_size = int(self.fft_size_combo.currentText())
+        hop_size = self.hop_size_spin.value()
+        self.mobilenet_tab.update_preprocessing(self.iq_data, None, sample_rate, fft_size, hop_size)
+        
     def start_analysis(self):
         if self.iq_data is None:
             QMessageBox.warning(self, "Warning", "Please load a file first")
@@ -1013,9 +1063,15 @@ class SpectrumSensingGUI(QMainWindow):
     def analysis_finished(self, results):
         self.analysis_results = results
         
-        # Update results display
-        self.classification_label.setText(f"Classification: {results['classification']}")
-        self.confidence_label.setText(f"Confidence: {results['confidence']:.3f}")
+        # Update results display with detailed information
+        classification = results.get('classification', 'N/A')
+        confidence = results.get('confidence', 0)
+        idle_count = results.get('idle_count', 0)
+        traffic_count = results.get('traffic_count', 0)
+        total_segments = results.get('total_segments', 0)
+        
+        self.classification_label.setText(f"Classification: {classification}")
+        self.confidence_label.setText(f"Confidence: {confidence:.3f} | Segments: {idle_count} Idle, {traffic_count} Traffic")
         
         # Update results tab
         self.results_tab.update_results(results)
@@ -1023,15 +1079,18 @@ class SpectrumSensingGUI(QMainWindow):
         # Update summary tab
         self.summary_tab.update_summary(self.iq_data, results, self.sample_rate_spin.value() * 1e6)
         
-        # Update MobileNet preprocessing tab
-        self.mobilenet_tab.update_preprocessing(self.iq_data, results, self.sample_rate_spin.value() * 1e6)
+        # Update MobileNet preprocessing tab with current GUI parameters
+        fft_size = int(self.fft_size_combo.currentText())
+        hop_size = self.hop_size_spin.value()
+        self.mobilenet_tab.update_preprocessing(self.iq_data, results, self.sample_rate_spin.value() * 1e6, fft_size, hop_size)
         
         # Hide progress bar
         self.progress_bar.setVisible(False)
         
-        # Update status
+        # Update status with detailed information
         self.status_label.setText("Status: Complete")
-        self.status_bar.showMessage("Analysis completed successfully")
+        status_msg = f"Analysis complete: {classification} ({confidence:.1%} confidence, {total_segments} segments analyzed)"
+        self.status_bar.showMessage(status_msg)
         
     def analysis_error(self, error_msg):
         # Hide progress bar

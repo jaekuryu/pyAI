@@ -1,5 +1,18 @@
 # Update History
 
+## 33f8cf2 jaekuryu 2025-07-26 02:07:31 -0400 Adding Mobilenet Preprocessing Tab : pyMnet_gui.py based on docrules.md
+
+- Added new "MobileNet Preprocessing" tab to visualize spectrogram preprocessing steps
+- Implemented 1x3 grid layout showing three preprocessing stages:
+  - Step 1: dB Scale Spectrogram conversion
+  - Step 2: Normalized [0,1] spectrogram scaling
+  - Step 3: 224x224 pixel resizing for MobileNet input
+- Integrated PyTorch interpolation for accurate spectrogram resizing
+- Added text annotations showing original and final spectrogram dimensions
+- Positioned tab before "Results" tab in the interface order
+- Optimized font sizes and layout spacing for better visualization
+- Enhanced MobileNet feature extraction pipeline visualization
+
 ## 1408431 jaekuryu 2025-07-25 21:13:47 -0400 Adding a set of Analysis Plots : pyMnet_gui.py
 
 - Added new "Summary" tab with comprehensive analysis plots
