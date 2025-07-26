@@ -194,6 +194,7 @@ class TimeDomainTab(QWidget):
     def __init__(self):
         super().__init__()
         self.plot_widget = PlotWidget()
+        self.iq_data = None  # Store IQ data for redrawing
         self.setup_ui()
         
     def setup_ui(self):
@@ -206,7 +207,7 @@ class TimeDomainTab(QWidget):
         self.sample_range_spin = QSpinBox()
         self.sample_range_spin.setRange(100, 10000)
         self.sample_range_spin.setValue(1000)
-        self.sample_range_spin.valueChanged.connect(self.update_plot)
+        self.sample_range_spin.valueChanged.connect(self.on_sample_range_changed)
         
         controls_layout.addWidget(self.sample_range_label)
         controls_layout.addWidget(self.sample_range_spin)
@@ -220,6 +221,9 @@ class TimeDomainTab(QWidget):
         if iq_data is None:
             return
             
+        # Store IQ data for redrawing when sample range changes
+        self.iq_data = iq_data
+        
         self.plot_widget.clear()
         ax = self.plot_widget.figure.add_subplot(111)
         
@@ -237,6 +241,11 @@ class TimeDomainTab(QWidget):
         ax.grid(True, alpha=0.3)
         
         self.plot_widget.canvas.draw()
+        
+    def on_sample_range_changed(self):
+        """Handle sample range spin box value changes"""
+        if self.iq_data is not None:
+            self.update_plot(self.iq_data)
 
 class FrequencyDomainTab(QWidget):
     """Tab for frequency domain visualization"""
@@ -898,25 +907,10 @@ class SpectrumSensingGUI(QMainWindow):
         settings_layout.addWidget(self.load_settings_button)
         settings_layout.addWidget(self.reset_settings_button)
         
-        # Results group
-        results_group = QGroupBox("Results")
-        results_layout = QVBoxLayout()
-        
-        self.status_label = QLabel("Status: Ready")
-        self.classification_label = QLabel("Classification: N/A")
-        self.confidence_label = QLabel("Confidence: N/A")
-        
-        results_layout.addWidget(self.status_label)
-        results_layout.addWidget(self.classification_label)
-        results_layout.addWidget(self.confidence_label)
-        
-        results_group.setLayout(results_layout)
-        
         # Add groups to control panel
         control_layout.addWidget(file_group)
         control_layout.addWidget(param_group)
         control_layout.addLayout(settings_layout) # Added settings_layout
-        control_layout.addWidget(results_group)
         control_layout.addStretch()
         
         # Add control panel to splitter
@@ -1084,7 +1078,6 @@ class SpectrumSensingGUI(QMainWindow):
         self.progress_bar.setValue(0)
         
         # Update status
-        self.status_label.setText("Status: Analyzing...")
         self.status_bar.showMessage("Analysis in progress...")
         
         # Start analysis
@@ -1096,15 +1089,12 @@ class SpectrumSensingGUI(QMainWindow):
     def analysis_finished(self, results):
         self.analysis_results = results
         
-        # Update results display with detailed information
+        # Get results information for status bar
         classification = results.get('classification', 'N/A')
         confidence = results.get('confidence', 0)
         idle_count = results.get('idle_count', 0)
         traffic_count = results.get('traffic_count', 0)
         total_segments = results.get('total_segments', 0)
-        
-        self.classification_label.setText(f"Classification: {classification}")
-        self.confidence_label.setText(f"Confidence: {confidence:.3f} | Segments: {idle_count} Idle, {traffic_count} Traffic")
         
         # Update results tab
         self.results_tab.update_results(results)
@@ -1124,7 +1114,6 @@ class SpectrumSensingGUI(QMainWindow):
         self.progress_bar.setVisible(False)
         
         # Update status with detailed information
-        self.status_label.setText("Status: Complete")
         status_msg = f"Analysis complete: {classification} ({confidence:.1%} confidence, {total_segments} segments analyzed)"
         self.status_bar.showMessage(status_msg)
         
@@ -1133,7 +1122,6 @@ class SpectrumSensingGUI(QMainWindow):
         self.progress_bar.setVisible(False)
         
         # Update status
-        self.status_label.setText("Status: Error")
         self.status_bar.showMessage("Analysis failed")
         
         # Show error message
